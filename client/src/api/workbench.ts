@@ -24,10 +24,11 @@ export async function getMyRequirements(
   page = 1,
   pageSize = 10,
   sort?: 'priority',
+  status?: string,
 ): Promise<MyRequirementListResponse> {
   try {
     const response = await axiosForBackend({
-      url: `/api/workbench/my-requirements?page=${page}&pageSize=${pageSize}${sort ? `&sort=${sort}` : ''}`,
+      url: `/api/workbench/my-requirements?page=${page}&pageSize=${pageSize}${sort ? `&sort=${sort}` : ''}${status ? `&status=${encodeURIComponent(status)}` : ''}`,
       method: 'GET',
     });
     return response.data;
@@ -41,10 +42,11 @@ export async function getMyDefects(
   page = 1,
   pageSize = 10,
   sort?: 'priority',
+  status?: string,
 ): Promise<MyDefectListResponse> {
   try {
     const response = await axiosForBackend({
-      url: `/api/workbench/my-defects?page=${page}&pageSize=${pageSize}${sort ? `&sort=${sort}` : ''}`,
+      url: `/api/workbench/my-defects?page=${page}&pageSize=${pageSize}${sort ? `&sort=${sort}` : ''}${status ? `&status=${encodeURIComponent(status)}` : ''}`,
       method: 'GET',
     });
     return response.data;

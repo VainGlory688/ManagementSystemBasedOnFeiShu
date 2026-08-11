@@ -18,8 +18,11 @@ import { WorkbenchStats } from './WorkbenchStats';
 import { RequirementList } from './RequirementList';
 import { DefectList } from './DefectList';
 import { VersionList } from './VersionList';
+import { useFieldOptions } from '@/hooks/useFieldOptions';
+import PersonnelGanttPage from '@/pages/personnel-gantt/PersonnelGanttPage';
 
 const PAGE_SIZE = 5;
+const REQUIREMENT_STATUS_OPTIONS = ['进行中', '待拆分', '已逾期', '已完成'];
 
 function ListPager({ page, total, onPageChange }: { page: number; total: number; onPageChange: (page: number) => void }) {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -35,6 +38,7 @@ function ListPager({ page, total, onPageChange }: { page: number; total: number;
 }
 
 const WorkbenchPage = () => {
+  const currentUserId = typeof window === 'undefined' ? undefined : window.userId;
   const [overview, setOverview] = useState<WorkbenchOverview | null>(null);
   const [requirements, setRequirements] = useState<MyRequirementItem[]>([]);
   const [defects, setDefects] = useState<MyDefectItem[]>([]);
@@ -47,12 +51,15 @@ const WorkbenchPage = () => {
   const [versionPage, setVersionPage] = useState(1);
   const [requirementSort, setRequirementSort] = useState<'priority' | 'updated'>('priority');
   const [defectSort, setDefectSort] = useState<'priority' | 'updated'>('priority');
+  const [requirementStatus, setRequirementStatus] = useState('');
+  const [defectStatus, setDefectStatus] = useState('');
   const [versionSort, setVersionSort] = useState<'name' | 'updated'>('name');
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [loadingReq, setLoadingReq] = useState(true);
   const [loadingDefect, setLoadingDefect] = useState(true);
   const [loadingVersion, setLoadingVersion] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { options: fieldOptions } = useFieldOptions();
 
   useEffect(() => {
     const fetchOverview = async (): Promise<void> => {
@@ -71,25 +78,35 @@ const WorkbenchPage = () => {
 
   useEffect(() => {
     setLoadingReq(true);
-    getMyRequirements(requirementPage, PAGE_SIZE, requirementSort === 'priority' ? 'priority' : undefined)
+    getMyRequirements(
+      requirementPage,
+      PAGE_SIZE,
+      requirementSort === 'priority' ? 'priority' : undefined,
+      requirementStatus || undefined,
+    )
       .then((response) => {
         setRequirements(response.items);
         setRequirementTotal(response.total);
       })
       .catch((err: unknown) => logger.error('工作台需求加载失败', err))
       .finally(() => setLoadingReq(false));
-  }, [requirementPage, requirementSort]);
+  }, [requirementPage, requirementSort, requirementStatus]);
 
   useEffect(() => {
     setLoadingDefect(true);
-    getMyDefects(defectPage, PAGE_SIZE, defectSort === 'priority' ? 'priority' : undefined)
+    getMyDefects(
+      defectPage,
+      PAGE_SIZE,
+      defectSort === 'priority' ? 'priority' : undefined,
+      defectStatus || undefined,
+    )
       .then((response) => {
         setDefects(response.items);
         setDefectTotal(response.total);
       })
       .catch((err: unknown) => logger.error('工作台缺陷加载失败', err))
       .finally(() => setLoadingDefect(false));
-  }, [defectPage, defectSort]);
+  }, [defectPage, defectSort, defectStatus]);
 
   useEffect(() => {
     setLoadingVersion(true);
@@ -131,6 +148,19 @@ const WorkbenchPage = () => {
               与我相关的需求
             </h2>
             <div className="flex items-center gap-3">
+              <select
+                className="h-7 rounded-sm border border-border bg-card px-2 text-xs text-foreground"
+                value={requirementStatus}
+                onChange={(event) => {
+                  setRequirementStatus(event.target.value);
+                  setRequirementPage(1);
+                }}
+              >
+                <option value="">全部状态</option>
+                {REQUIREMENT_STATUS_OPTIONS.map((status) => (
+                  <option key={status} value={status}>{status}</option>
+                ))}
+              </select>
               <select className="h-7 rounded-sm border border-border bg-card px-2 text-xs text-foreground" value={requirementSort} onChange={(event) => { setRequirementSort(event.target.value as 'priority' | 'updated'); setRequirementPage(1); }}>
                 <option value="priority">优先级排序</option>
                 <option value="updated">最近更新</option>
@@ -148,6 +178,19 @@ const WorkbenchPage = () => {
               与我相关的缺陷
             </h2>
             <div className="flex items-center gap-3">
+              <select
+                className="h-7 rounded-sm border border-border bg-card px-2 text-xs text-foreground"
+                value={defectStatus}
+                onChange={(event) => {
+                  setDefectStatus(event.target.value);
+                  setDefectPage(1);
+                }}
+              >
+                <option value="">全部状态</option>
+                {(fieldOptions.defect_status || []).map((status) => (
+                  <option key={status} value={status}>{status}</option>
+                ))}
+              </select>
               <select className="h-7 rounded-sm border border-border bg-card px-2 text-xs text-foreground" value={defectSort} onChange={(event) => { setDefectSort(event.target.value as 'priority' | 'updated'); setDefectPage(1); }}>
                 <option value="priority">优先级排序</option>
                 <option value="updated">最近更新</option>
@@ -158,6 +201,16 @@ const WorkbenchPage = () => {
           <DefectList items={defects} loading={loadingDefect} />
           <ListPager page={defectPage} total={defectTotal} onPageChange={setDefectPage} />
         </div>
+      </section>
+
+      <section>
+        {currentUserId ? (
+          <PersonnelGanttPage fixedPersonId={currentUserId} embedded />
+        ) : (
+          <div className="rounded-sm border border-border bg-card p-5 text-sm text-muted-foreground">
+            未获取到当前用户信息，暂时无法加载个人排期。
+          </div>
+        )}
       </section>
 
       {/* 我参与的版本 */}

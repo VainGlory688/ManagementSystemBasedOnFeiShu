@@ -213,7 +213,7 @@ export interface MyRequirementItem {
   baseRecordId: string;
   appReqName: string;
   priority: string;
-  appStatus: string;
+  appStatus: RequirementCurrentStatus;
   planningVersionName?: string;
   estimatedCompletionTime: string;
 }

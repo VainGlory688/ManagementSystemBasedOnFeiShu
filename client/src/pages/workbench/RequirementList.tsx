@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Calendar, Layers } from 'lucide-react';
 import type { MyRequirementItem } from '@shared/api.interface';
+import { RequirementStatusBadge } from '@/pages/requirement-list/RequirementStatusBadge';
 
 interface RequirementListProps {
   items: MyRequirementItem[];
@@ -18,17 +19,6 @@ const priorityClassMap: Record<string, string> = {
 
 const getPriorityClass = (priority: string): string => {
   return priorityClassMap[priority?.toUpperCase?.()] || priorityClassMap.待定;
-};
-
-const statusClassMap: Record<string, string> = {
-  已完成: 'bg-[hsl(160_40%_94%)] text-[hsl(160_60%_35%)]',
-  进行中: 'bg-[hsl(215_30%_94%)] text-[hsl(215_60%_38%)]',
-  待处理: 'bg-[hsl(38_70%_93%)] text-[hsl(38_80%_42%)]',
-  已关闭: 'bg-[hsl(215_12%_92%)] text-[hsl(215_12%_50%)]',
-};
-
-const getStatusClass = (status: string): string => {
-  return statusClassMap[status] || 'bg-[hsl(215_12%_92%)] text-[hsl(215_12%_50%)]';
 };
 
 const containerVariants = {
@@ -104,13 +94,7 @@ const RequirementList = ({ items, loading }: RequirementListProps) => {
               </span>
             )}
             {item.appStatus && (
-              <span
-                className={`inline-flex items-center h-[22px] px-2 rounded-full text-xs font-medium ${getStatusClass(
-                  item.appStatus,
-                )}`}
-              >
-                {item.appStatus}
-              </span>
+              <RequirementStatusBadge status={item.appStatus} />
             )}
             {item.estimatedCompletionTime && (
               <span className="inline-flex items-center gap-1 font-mono ml-auto">

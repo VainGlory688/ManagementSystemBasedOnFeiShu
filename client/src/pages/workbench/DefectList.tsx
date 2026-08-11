@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Layers } from 'lucide-react';
 import type { MyDefectItem } from '@shared/api.interface';
+import { PillBadge } from '@/pages/defect-list/badge-helpers';
 
 interface DefectListProps {
   items: MyDefectItem[];
@@ -17,18 +18,6 @@ const severityClassMap: Record<string, string> = {
 
 const getSeverityClass = (severity: string): string => {
   return severityClassMap[severity] || severityClassMap.轻微;
-};
-
-const statusClassMap: Record<string, string> = {
-  已关闭: 'bg-[hsl(215_12%_92%)] text-[hsl(215_12%_50%)]',
-  已修复: 'bg-[hsl(160_40%_94%)] text-[hsl(160_60%_35%)]',
-  待验证: 'bg-[hsl(38_70%_93%)] text-[hsl(38_80%_42%)]',
-  进行中: 'bg-[hsl(215_30%_94%)] text-[hsl(215_60%_38%)]',
-  待处理: 'bg-[hsl(4_60%_95%)] text-[hsl(4_75%_42%)]',
-};
-
-const getStatusClass = (status: string): string => {
-  return statusClassMap[status] || 'bg-[hsl(215_12%_92%)] text-[hsl(215_12%_50%)]';
 };
 
 const containerVariants = {
@@ -113,13 +102,7 @@ const DefectList = ({ items, loading }: DefectListProps) => {
                 </span>
               )}
               {item.status && (
-                <span
-                  className={`inline-flex items-center h-[22px] px-2 rounded-full text-xs font-medium ${getStatusClass(
-                    item.status,
-                  )}`}
-                >
-                  {item.status}
-                </span>
+              <PillBadge text={item.status} variant="status" />
               )}
             </div>
             </motion.button>

@@ -38,15 +38,27 @@ function getViewRange(anchor: Dayjs, view: GanttView) {
   return { start: anchor.startOf('month'), end: anchor.endOf('month'), label: anchor.format('YYYY 年 MM 月') };
 }
 
-const PersonnelGanttPage = () => {
+interface PersonnelGanttPageProps {
+  fixedPersonId?: string;
+  embedded?: boolean;
+}
+
+const PersonnelGanttPage = ({
+  fixedPersonId,
+  embedded = false,
+}: PersonnelGanttPageProps) => {
   const [subReqs, setSubReqs] = useState<SubRequirementItem[]>([]);
   const [requirements, setRequirements] = useState<VersionRequirement[]>([]);
   const [userProfiles, setUserProfiles] = useState<Record<string, UserInput>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filterPerson, setFilterPerson] = useState<string | null>(null);
+  const [filterPerson, setFilterPerson] = useState<string | null>(fixedPersonId || null);
   const [view, setView] = useState<GanttView>('month');
   const [currentDate, setCurrentDate] = useState(() => dayjs());
+
+  useEffect(() => {
+    setFilterPerson(fixedPersonId || null);
+  }, [fixedPersonId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,37 +173,39 @@ const PersonnelGanttPage = () => {
 
   return (
     <div className="space-y-4">
-      {/* 标题 */}
       <div>
         <h1 className="font-heading text-2xl font-semibold text-foreground tracking-tight">
-          人员排期甘特图
+          {embedded ? '我的人员排期' : '人员排期甘特图'}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          按人员查看子需求排期，支持周、月、季度、年度时间视图
+          {embedded
+            ? '查看分配给我的子需求排期，支持周、月、季度、年度时间视图'
+            : '按人员查看子需求排期，支持周、月、季度、年度时间视图'}
         </p>
       </div>
 
-      {/* 筛选区 */}
-      <div className="bg-card border border-border rounded-sm p-3">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground font-medium">人员</label>
-            <div className="w-48">
-              <UserSelect
-                value={filterPerson}
-                onChange={setFilterPerson}
-                placeholder="全部人员"
-              />
+      {!fixedPersonId && (
+        <div className="bg-card border border-border rounded-sm p-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-muted-foreground font-medium">人员</label>
+              <div className="w-48">
+                <UserSelect
+                  value={filterPerson}
+                  onChange={setFilterPerson}
+                  placeholder="全部人员"
+                />
+              </div>
             </div>
+            {filterPerson && (
+              <Button type="button" variant="outline" size="sm" onClick={() => setFilterPerson(null)}>
+                <RotateCcw className="mr-1.5 size-3.5" />
+                重置筛选
+              </Button>
+            )}
           </div>
-          {filterPerson && (
-            <Button type="button" variant="outline" size="sm" onClick={() => setFilterPerson(null)}>
-              <RotateCcw className="mr-1.5 size-3.5" />
-              重置筛选
-            </Button>
-          )}
         </div>
-      </div>
+      )}
 
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">

@@ -30,11 +30,12 @@ export class WorkbenchController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('sort') sort?: 'priority',
+    @Query('status') status?: string,
   ): Promise<MyRequirementListResponse> {
     const userId = req.userContext?.userId || '';
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 10;
-    return this.workbenchService.getMyRequirements(userId, pageNum, sizeNum, sort);
+    return this.workbenchService.getMyRequirements(userId, pageNum, sizeNum, sort, status);
   }
 
   @NeedLogin()
@@ -44,11 +45,12 @@ export class WorkbenchController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('sort') sort?: 'priority',
+    @Query('status') status?: string,
   ): Promise<MyDefectListResponse> {
     const userId = req.userContext?.userId || '';
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 10;
-    return this.workbenchService.getMyDefects(userId, pageNum, sizeNum, sort);
+    return this.workbenchService.getMyDefects(userId, pageNum, sizeNum, sort, status);
   }
 
   @NeedLogin()
