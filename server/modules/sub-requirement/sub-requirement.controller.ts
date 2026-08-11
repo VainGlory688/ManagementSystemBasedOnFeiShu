@@ -59,7 +59,7 @@ export class SubRequirementController {
 
   @NeedLogin()
   @Delete(':id')
-  async delete(@Param('id') id: string): Promise<void> {
-    return this.subRequirementService.delete(id);
+  async delete(@Param('id') id: string, @Req() req: Request): Promise<void> {
+    return this.subRequirementService.delete(id, req.userContext.userId);
   }
 }

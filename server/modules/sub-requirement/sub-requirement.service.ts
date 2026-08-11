@@ -155,6 +155,13 @@ export class SubRequirementService {
       ) RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
+    if (dto.appParentWorkItem) {
+      await this.addToParentRequirement(
+        dto.appParentWorkItem,
+        rows[0].id,
+        userId,
+      );
+    }
     return this.getDetail(rows[0].id);
   }
 
@@ -189,7 +196,25 @@ export class SubRequirementService {
     return this.getDetail(rows[0].id);
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(id: string, userId: string): Promise<void> {
+    const items = await this.db
+      .select({
+        id: subRequirementItem.id,
+        baseRecordId: subRequirementItem.baseRecordId,
+        appParentWorkItem: subRequirementItem.appParentWorkItem,
+      })
+      .from(subRequirementItem)
+      .where(
+        isValidUuid(id)
+          ? or(eq(subRequirementItem.id, id), eq(subRequirementItem.baseRecordId, id))
+          : eq(subRequirementItem.baseRecordId, id),
+      )
+      .limit(1);
+    const item = items[0];
+    if (!item) {
+      throw new NotFoundException('子需求不存在');
+    }
+
     const result = await this.db
       .delete(subRequirementItem)
       .where(
@@ -201,6 +226,18 @@ export class SubRequirementService {
     if (result.length === 0) {
       throw new NotFoundException('子需求不存在');
     }
+
+    const parentIds = extractParentRecordIds(item.appParentWorkItem);
+    await Promise.all(
+      parentIds.map((parentId) =>
+        this.removeFromParentRequirement(
+          parentId,
+          item.id,
+          item.baseRecordId || item.id,
+          userId,
+        ),
+      ),
+    );
   }
 
   private mapSubRequirement(s: typeof subRequirementItem.$inferSelect): SubRequirementItem {
@@ -217,5 +254,99 @@ export class SubRequirementService {
       appDetails: s.appDetails || undefined,
       appParentWorkItemName: undefined,
     };
+  }
+
+  private async addToParentRequirement(
+    parentId: string,
+    subRequirementId: string,
+    userId: string,
+  ): Promise<void> {
+    const result = await this.db.execute(
+      sql`UPDATE version_requirement
+        SET sub_requirement_item = jsonb_set(
+              COALESCE(sub_requirement_item, '{}'::jsonb),
+              '{link_record_ids}',
+              CASE
+                WHEN COALESCE(
+                  NULLIF(sub_requirement_item -> 'link_record_ids', 'null'::jsonb),
+                  '[]'::jsonb
+                )
+                  @> jsonb_build_array(${subRequirementId}::text)
+                  THEN COALESCE(
+                    NULLIF(sub_requirement_item -> 'link_record_ids', 'null'::jsonb),
+                    '[]'::jsonb
+                  )
+                ELSE COALESCE(
+                  NULLIF(sub_requirement_item -> 'link_record_ids', 'null'::jsonb),
+                  '[]'::jsonb
+                )
+                  || jsonb_build_array(${subRequirementId}::text)
+              END
+            ),
+            _updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}
+        WHERE ${
+          isValidUuid(parentId)
+            ? sql`id = ${parentId} OR base_record_id = ${parentId}`
+            : sql`base_record_id = ${parentId}`
+        }
+        RETURNING id`,
+    );
+    if ((result as unknown as { id: string }[]).length === 0) {
+      throw new NotFoundException('父需求不存在');
+    }
+  }
+
+  private async removeFromParentRequirement(
+    parentId: string,
+    subRequirementId: string,
+    subRequirementRecordId: string,
+    userId: string,
+  ): Promise<void> {
+    await this.db.execute(
+      sql`UPDATE version_requirement
+        SET sub_requirement_item = jsonb_set(
+              jsonb_set(
+                COALESCE(sub_requirement_item, '{}'::jsonb),
+                '{link_record_ids}',
+                COALESCE(
+                  (
+                    SELECT jsonb_agg(linked_id)
+                    FROM jsonb_array_elements_text(
+                      COALESCE(
+                        NULLIF(sub_requirement_item -> 'link_record_ids', 'null'::jsonb),
+                        '[]'::jsonb
+                      )
+                    ) AS linked_id
+                    WHERE linked_id <> ${subRequirementId}
+                      AND linked_id <> ${subRequirementRecordId}
+                  ),
+                  'null'::jsonb
+                )
+              ),
+              '{edges}',
+              COALESCE(
+                (
+                  SELECT jsonb_agg(edge)
+                  FROM jsonb_array_elements(
+                    COALESCE(
+                      NULLIF(sub_requirement_item -> 'edges', 'null'::jsonb),
+                      '[]'::jsonb
+                    )
+                  ) AS edge
+                  WHERE edge ->> 'source' <> ${subRequirementId}
+                    AND edge ->> 'target' <> ${subRequirementId}
+                    AND edge ->> 'source' <> ${subRequirementRecordId}
+                    AND edge ->> 'target' <> ${subRequirementRecordId}
+                ),
+                '[]'::jsonb
+              )
+            ),
+            _updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}
+        WHERE ${
+          isValidUuid(parentId)
+            ? sql`id = ${parentId} OR base_record_id = ${parentId}`
+            : sql`base_record_id = ${parentId}`
+        }`,
+    );
   }
 }

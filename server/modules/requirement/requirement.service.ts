@@ -268,9 +268,13 @@ export class RequirementService {
     }
 
     const config = { edges };
+    const storedConfig = {
+      link_record_ids: items.map((item) => item.baseRecordId || item.id),
+      ...config,
+    };
     const result = await this.db.execute(
       sql`UPDATE version_requirement
-        SET sub_requirement_item = CAST(${JSON.stringify(config)} AS jsonb),
+        SET sub_requirement_item = CAST(${JSON.stringify(storedConfig)} AS jsonb),
             _updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}
         WHERE ${isValidUuid(id) ? sql`id = ${id} OR base_record_id = ${id}` : sql`base_record_id = ${id}`}
         RETURNING id`,
