@@ -4,6 +4,7 @@ import { and, count, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import {
   mainVersionManage,
   versionRequirement,
+  subRequirementItem,
   testPlan,
   defectItem,
 } from '@server/database/schema';
@@ -17,6 +18,23 @@ import {
   UpdateVersionDto,
 } from '@shared/api.interface';
 import { isValidUuid } from '@server/common/utils/uuid';
+
+function extractParentRecordIds(value: unknown): string[] {
+  if (!value || typeof value !== 'object') return [];
+  const ids = (value as { link_record_ids?: unknown }).link_record_ids;
+  return Array.isArray(ids)
+    ? ids.filter((id): id is string => typeof id === 'string')
+    : [];
+}
+
+function calculateRequirementStatus(
+  items: Array<{ appStatus: string | null; appOverdueDays: unknown }>,
+): '待拆分' | '进行中' | '已完成' | '已逾期' {
+  if (items.length === 0) return '待拆分';
+  if (items.every((item) => item.appStatus === '已完成')) return '已完成';
+  if (items.some((item) => Number(item.appOverdueDays || 0) > 0)) return '已逾期';
+  return '进行中';
+}
 
 interface ListQuery {
   page: number;
@@ -95,6 +113,36 @@ export class VersionService {
         .offset((page - 1) * pageSize),
       this.db.select({ count: count() }).from(versionRequirement).where(where),
     ]);
+    const requirementIds = [...new Set(
+      itemsRes.flatMap((item) =>
+        [item.id, item.baseRecordId].filter(
+          (value): value is string => Boolean(value),
+        ),
+      ),
+    )];
+    const subItems = requirementIds.length === 0
+      ? []
+      : await this.db
+          .select({
+            appParentWorkItem: subRequirementItem.appParentWorkItem,
+            appStatus: subRequirementItem.appStatus,
+            appOverdueDays: subRequirementItem.appOverdueDays,
+          })
+          .from(subRequirementItem)
+          .where(
+            or(
+              ...requirementIds.map(
+                (requirementId) =>
+                  sql`${subRequirementItem.appParentWorkItem}::text LIKE '%' || ${requirementId} || '%'`,
+              ),
+            ),
+          );
+    const subItemsByParent = new Map<string, typeof subItems>();
+    for (const item of subItems) {
+      for (const parentId of extractParentRecordIds(item.appParentWorkItem)) {
+        subItemsByParent.set(parentId, [...(subItemsByParent.get(parentId) || []), item]);
+      }
+    }
 
     return {
       items: itemsRes.map((r) => ({
@@ -102,6 +150,11 @@ export class VersionService {
         baseRecordId: r.baseRecordId || '',
         appReqName: r.appReqName || '',
         currentOwner: r.currentOwner || '',
+        currentStatus: calculateRequirementStatus(
+          subItemsByParent.get(r.baseRecordId || r.id)
+          || subItemsByParent.get(r.id)
+          || [],
+        ),
         priority: r.priority || '',
         appStatus: '',
         reqType: r.reqType || '',

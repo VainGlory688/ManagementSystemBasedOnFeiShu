@@ -14,6 +14,7 @@ import {
   UpdateRequirementDto,
   RequirementPipelineConfig,
   RequirementPipelineEdge,
+  RequirementCurrentStatus,
   UpdateRequirementPipelineDto,
 } from '@shared/api.interface';
 import { isValidUuid } from '@server/common/utils/uuid';
@@ -64,6 +65,15 @@ function parsePipeline(value: unknown): RequirementPipelineConfig {
     edges.push({ source, target });
   }
   return { edges };
+}
+
+function calculateCurrentStatus(
+  items: Array<{ appStatus: string | null; appOverdueDays: unknown }>,
+): RequirementCurrentStatus {
+  if (items.length === 0) return '待拆分';
+  if (items.every((item) => item.appStatus === '已完成')) return '已完成';
+  if (items.some((item) => Number(item.appOverdueDays || 0) > 0)) return '已逾期';
+  return '进行中';
 }
 
 function hasCycle(edges: RequirementPipelineEdge[]): boolean {
@@ -140,6 +150,7 @@ export class RequirementService {
         versionMap.set(version.baseRecordId, version);
       }
     }
+    const statusMap = await this.getCurrentStatuses(itemsRes);
 
     return {
       items: itemsRes.map((r) => {
@@ -149,6 +160,7 @@ export class RequirementService {
           baseRecordId: r.baseRecordId || '',
           appReqName: r.appReqName || '',
           currentOwner: r.currentOwner || '',
+          currentStatus: statusMap.get(r.id) || '待拆分',
           priority: r.priority || '',
           appStatus: '',
           reqType: r.reqType || '',
@@ -180,6 +192,7 @@ export class RequirementService {
       throw new NotFoundException('需求不存在');
     }
     const r = result[0];
+    const statusMap = await this.getCurrentStatuses([r]);
     const version = r.planningVersion
       ? await this.db
           .select({ versionName: mainVersionManage.versionName, id: mainVersionManage.id })
@@ -199,6 +212,7 @@ export class RequirementService {
       baseRecordId: r.baseRecordId || '',
       appReqName: r.appReqName || '',
       currentOwner: r.currentOwner || '',
+      currentStatus: statusMap.get(r.id) || '待拆分',
       priority: r.priority || '',
       appStatus: '',
       reqType: r.reqType || '',
@@ -402,6 +416,54 @@ export class RequirementService {
     return version.id;
   }
 
+  private async getCurrentStatuses(
+    requirements: Array<Pick<typeof versionRequirement.$inferSelect, 'id' | 'baseRecordId'>>,
+  ): Promise<Map<string, RequirementCurrentStatus>> {
+    const parentIds = [...new Set(
+      requirements.flatMap((requirement) =>
+        [requirement.id, requirement.baseRecordId].filter(
+          (value): value is string => Boolean(value),
+        ),
+      ),
+    )];
+    const items = parentIds.length === 0
+      ? []
+      : await this.db
+          .select({
+            id: subRequirementItem.id,
+            appParentWorkItem: subRequirementItem.appParentWorkItem,
+            appStatus: subRequirementItem.appStatus,
+            appOverdueDays: subRequirementItem.appOverdueDays,
+          })
+          .from(subRequirementItem)
+          .where(
+            or(
+              ...parentIds.map(
+                (parentId) =>
+                  sql`${subRequirementItem.appParentWorkItem}::text LIKE '%' || ${parentId} || '%'`,
+              ),
+            ),
+          );
+    const itemsByParent = new Map<string, typeof items>();
+    for (const item of items) {
+      for (const parentId of extractParentRecordIds(item.appParentWorkItem)) {
+        if (!parentIds.includes(parentId)) continue;
+        itemsByParent.set(parentId, [...(itemsByParent.get(parentId) || []), item]);
+      }
+    }
+
+    return new Map(
+      requirements.map((requirement) => [
+        requirement.id,
+        calculateCurrentStatus(
+          itemsByParent.get(requirement.baseRecordId || requirement.id)
+          || itemsByParent.get(requirement.id)
+          || [],
+        ),
+      ]),
+    );
+  }
+
 
   private mapRequirement(r: typeof versionRequirement.$inferSelect): VersionRequirement {
     return {
@@ -409,6 +471,7 @@ export class RequirementService {
       baseRecordId: r.baseRecordId || '',
       appReqName: r.appReqName || '',
       currentOwner: r.currentOwner || '',
+      currentStatus: '待拆分',
       priority: r.priority || '',
       appStatus: '',
       reqType: r.reqType || '',

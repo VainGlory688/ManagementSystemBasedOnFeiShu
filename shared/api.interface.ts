@@ -85,6 +85,7 @@ export interface VersionRequirement {
   baseRecordId: string;
   appReqName: string;
   currentOwner: string;
+  currentStatus: RequirementCurrentStatus;
   priority: string;
   appStatus?: string;
   reqType: string;
@@ -98,6 +99,12 @@ export interface VersionRequirement {
   description?: string;
   pipeline?: RequirementPipelineConfig;
 }
+
+export type RequirementCurrentStatus =
+  | '待拆分'
+  | '进行中'
+  | '已完成'
+  | '已逾期';
 
 export interface RequirementPipelineEdge {
   source: string;

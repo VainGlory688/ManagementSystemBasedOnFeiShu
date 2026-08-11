@@ -25,6 +25,7 @@ import { UserDisplay } from '@/components/business-ui/user-display';
 import { cn } from '@/lib/utils';
 
 import RequirementFilterBar from './RequirementFilterBar';
+import { RequirementStatusBadge } from './RequirementStatusBadge';
 import { getRequirementList, createRequirement, updateRequirement, deleteRequirement, type RequirementListParams } from '@/api/requirement';
 import type { VersionRequirement, CreateRequirementDto, UpdateRequirementDto } from '@shared/api.interface';
 import { getVersionList } from '@/api/version';
@@ -334,6 +335,7 @@ const RequirementListPage = () => {
                 <TableHead className="w-[40px] px-0"></TableHead>
                 <SortHeader label="需求名称" sortKey="appReqName" className="min-w-[220px]" />
                 <TableHead className="w-[140px]">负责人</TableHead>
+                <TableHead className="w-[100px]">当前状态</TableHead>
                 <SortHeader label="优先级" sortKey="priority" className="w-[90px]" />
                 <SortHeader label="需求类型" sortKey="reqType" className="w-[110px]" />
                 <SortHeader label="业务线" sortKey="businessLine" className="w-[110px]" />
@@ -347,14 +349,14 @@ const RequirementListPage = () => {
             <TableBody>
               {loading && (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={11} className="text-center py-12">
+                  <TableCell colSpan={12} className="text-center py-12">
                     <Loader2 className="size-5 animate-spin mx-auto text-muted-foreground" />
                   </TableCell>
                 </TableRow>
               )}
               {!loading && sortedItems.length === 0 && (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={11} className="text-center py-12 text-muted-foreground text-sm">
+                  <TableCell colSpan={12} className="text-center py-12 text-muted-foreground text-sm">
                     暂无需求数据
                   </TableCell>
                 </TableRow>
@@ -391,6 +393,9 @@ const RequirementListPage = () => {
                         {item.currentOwner && (
                           <UserDisplay value={[item.currentOwner]} size="small" />
                         )}
+                      </TableCell>
+                      <TableCell className="w-[100px]">
+                        <RequirementStatusBadge status={item.currentStatus} />
                       </TableCell>
                       <TableCell className="w-[90px]">
                         <Badge
