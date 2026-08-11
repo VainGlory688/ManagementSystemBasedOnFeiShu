@@ -60,9 +60,10 @@ export class TestPlanController {
   @Put(':id')
   async update(
     @Param('id') id: string,
+    @Req() req: Request,
     @Body() dto: UpdateTestPlanDto,
   ): Promise<TestPlan> {
-    return this.testPlanService.update(id, dto);
+    return this.testPlanService.update(id, dto, req.userContext.userId);
   }
 
   @NeedLogin()

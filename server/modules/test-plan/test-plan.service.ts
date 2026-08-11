@@ -151,7 +151,7 @@ export class TestPlanService {
     const result = await this.db.execute(
       sql`INSERT INTO test_plan (
         plan_name, test_status, priority, test_plan_type, business_line,
-        executor, expected_start_date, expected_end_date, related_version
+        executor, expected_start_date, expected_end_date, related_version, _created_by, _updated_by
       ) VALUES (
         ${dto.planName},
         ${dto.testStatus || null},
@@ -161,14 +161,16 @@ export class TestPlanService {
         ${executorProfiles},
         ${dto.expectedStartDate || null}::date,
         ${dto.expectedEndDate || null}::date,
-        ${dto.relatedVersion ? sql`to_jsonb(${dto.relatedVersion}::text)` : null}
+        ${dto.relatedVersion ? sql`to_jsonb(${dto.relatedVersion}::text)` : null},
+        ${userId ? sql`ROW(${userId})::user_profile` : null},
+        ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
     return this.getDetail(rows[0].id);
   }
 
-  async update(id: string, dto: UpdateTestPlanDto): Promise<TestPlan> {
+  async update(id: string, dto: UpdateTestPlanDto, userId: string): Promise<TestPlan> {
     const setParts: any[] = [];
     if (dto.planName !== undefined) setParts.push(sql`plan_name = ${dto.planName}`);
     if (dto.testStatus !== undefined) setParts.push(sql`test_status = ${dto.testStatus || null}`);
@@ -189,6 +191,7 @@ export class TestPlanService {
     if (setParts.length === 0) {
       return this.getDetail(id);
     }
+    setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
 
     const result = await this.db.execute(
       sql`UPDATE test_plan SET ${sql.join(setParts, sql`, `)} WHERE ${

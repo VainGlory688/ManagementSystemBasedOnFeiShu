@@ -51,9 +51,10 @@ export class SubRequirementController {
   @Put(':id')
   async update(
     @Param('id') id: string,
+    @Req() req: Request,
     @Body() dto: UpdateSubRequirementDto,
   ): Promise<SubRequirementItem> {
-    return this.subRequirementService.update(id, dto);
+    return this.subRequirementService.update(id, dto, req.userContext.userId);
   }
 
   @NeedLogin()

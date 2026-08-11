@@ -163,7 +163,7 @@ export class VersionService {
       sql`INSERT INTO main_version_manage (
         base_record_id, version_name, app_status, priority, version_type, version_doc, version_risk,
         version_start_date, pack_time, expected_test_time, version_close_date,
-        actual_gray_date, actual_release_date, rollback_reason_and_process
+        actual_gray_date, actual_release_date, rollback_reason_and_process, _created_by, _updated_by
       ) VALUES (
         gen_random_uuid()::text,
         ${dto.versionName}, ${dto.appStatus || null}, ${dto.priority || null},
@@ -174,14 +174,16 @@ export class VersionService {
         ${dto.versionCloseDate || null}::date,
         ${dto.actualGrayDate || null}::date,
         ${dto.actualReleaseDate || null}::date,
-        ${dto.rollbackReasonAndProcess || null}
+        ${dto.rollbackReasonAndProcess || null},
+        ${userId ? sql`ROW(${userId})::user_profile` : null},
+        ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
     return this.getDetail(rows[0].id);
   }
 
-  async update(id: string, dto: UpdateVersionDto): Promise<MainVersion> {
+  async update(id: string, dto: UpdateVersionDto, userId: string): Promise<MainVersion> {
     const setParts: any[] = [];
     if (dto.versionName !== undefined) setParts.push(sql`version_name = ${dto.versionName}`);
     if (dto.appStatus !== undefined) setParts.push(sql`app_status = ${dto.appStatus || null}`);
@@ -200,6 +202,7 @@ export class VersionService {
     if (setParts.length === 0) {
       return this.getDetail(id);
     }
+    setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
 
     const result = await this.db.execute(
       sql`UPDATE main_version_manage SET ${sql.join(setParts, sql`, `)} WHERE ${

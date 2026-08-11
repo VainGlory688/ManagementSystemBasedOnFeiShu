@@ -62,9 +62,10 @@ export class DefectController {
   @Put(':id')
   async update(
     @Param('id') id: string,
+    @Req() req: Request,
     @Body() dto: UpdateDefectDto,
   ): Promise<DefectItem> {
-    return this.defectService.update(id, dto);
+    return this.defectService.update(id, dto, req.userContext.userId);
   }
 
   @NeedLogin()

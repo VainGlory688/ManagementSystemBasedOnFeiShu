@@ -217,6 +217,7 @@ export class RequirementService {
   async updatePipeline(
     id: string,
     dto: UpdateRequirementPipelineDto,
+    userId: string,
   ): Promise<RequirementPipelineConfig> {
     if (!Array.isArray(dto?.edges) || dto.edges.length > 500) {
       throw new BadRequestException('流水线连线格式无效');
@@ -269,7 +270,8 @@ export class RequirementService {
     const config = { edges };
     const result = await this.db.execute(
       sql`UPDATE version_requirement
-        SET sub_requirement_item = CAST(${JSON.stringify(config)} AS jsonb)
+        SET sub_requirement_item = CAST(${JSON.stringify(config)} AS jsonb),
+            _updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}
         WHERE ${isValidUuid(id) ? sql`id = ${id} OR base_record_id = ${id}` : sql`base_record_id = ${id}`}
         RETURNING id`,
     );
@@ -281,11 +283,12 @@ export class RequirementService {
   }
 
   async create(dto: CreateRequirementDto, userId: string): Promise<VersionRequirement> {
-    const planningVersion = await this.resolvePlanningVersion(dto.planningVersion);
+    const planningVersion = await this.resolvePlanningVersion(dto.planningVersion, userId);
     const result = await this.db.execute(
       sql`INSERT INTO version_requirement (
         app_req_name, current_owner, priority, req_type, business_line,
-        planning_version, proposal_time, estimated_completion_time, creator, description
+        planning_version, proposal_time, estimated_completion_time, creator, description,
+        _created_by, _updated_by
       ) VALUES (
         ${dto.appReqName},
         ${dto.currentOwner ? sql`ROW(${dto.currentOwner})::user_profile` : null},
@@ -296,18 +299,20 @@ export class RequirementService {
         ${dto.proposalTime || null}::date,
         ${dto.estimatedCompletionTime || null}::date,
         ${userId ? sql`ROW(${userId})::user_profile` : null},
-        ${dto.description || null}
+        ${dto.description || null},
+        ${userId ? sql`ROW(${userId})::user_profile` : null},
+        ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
     return this.getDetail(rows[0].id);
   }
 
-  async update(id: string, dto: UpdateRequirementDto): Promise<VersionRequirement> {
+  async update(id: string, dto: UpdateRequirementDto, userId: string): Promise<VersionRequirement> {
     const setParts: any[] = [];
     const planningVersion =
       dto.planningVersion !== undefined
-        ? await this.resolvePlanningVersion(dto.planningVersion)
+        ? await this.resolvePlanningVersion(dto.planningVersion, userId)
         : undefined;
     if (dto.appReqName !== undefined) setParts.push(sql`app_req_name = ${dto.appReqName}`);
     if (dto.currentOwner !== undefined) setParts.push(sql`current_owner = ${dto.currentOwner ? sql`ROW(${dto.currentOwner})::user_profile` : null}`);
@@ -322,6 +327,7 @@ export class RequirementService {
     if (setParts.length === 0) {
       return this.getDetail(id);
     }
+    setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
 
     const result = await this.db.execute(
       sql`UPDATE version_requirement SET ${sql.join(setParts, sql`, `)} WHERE ${
@@ -351,7 +357,7 @@ export class RequirementService {
     }
   }
 
-  private async resolvePlanningVersion(value?: string): Promise<string | null> {
+  private async resolvePlanningVersion(value?: string, userId?: string): Promise<string | null> {
     if (!value) return null;
 
     const versions = await this.db
@@ -383,7 +389,10 @@ export class RequirementService {
     // local UUID as a stable relation key. The FK then has a valid target.
     await this.db
       .update(mainVersionManage)
-      .set({ baseRecordId: version.id })
+      .set({
+        baseRecordId: version.id,
+        updatedBy: userId || null,
+      })
       .where(eq(mainVersionManage.id, version.id));
 
     return version.id;

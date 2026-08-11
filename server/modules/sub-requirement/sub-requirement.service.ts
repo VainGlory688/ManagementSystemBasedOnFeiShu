@@ -139,7 +139,7 @@ export class SubRequirementService {
       sql`INSERT INTO sub_requirement_item (
         app_sub_requirement_name, app_status, app_current_owner,
         app_expected_start_date, app_expected_end_date, app_overdue_days,
-        app_priority, app_parent_work_item, app_details
+        app_priority, app_parent_work_item, app_details, _created_by, _updated_by
       ) VALUES (
         ${dto.appSubRequirementName},
         ${dto.appStatus || null},
@@ -149,14 +149,16 @@ export class SubRequirementService {
         ${dto.appOverdueDays !== undefined ? String(dto.appOverdueDays) : null},
         ${dto.appPriority || null},
         ${dto.appParentWorkItem ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(${dto.appParentWorkItem}::text))` : null},
-        ${dto.appDetails || null}
+        ${dto.appDetails || null},
+        ${userId ? sql`ROW(${userId})::user_profile` : null},
+        ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
     return this.getDetail(rows[0].id);
   }
 
-  async update(id: string, dto: UpdateSubRequirementDto): Promise<SubRequirementItem> {
+  async update(id: string, dto: UpdateSubRequirementDto, userId: string): Promise<SubRequirementItem> {
     const setParts: any[] = [];
     if (dto.appSubRequirementName !== undefined) setParts.push(sql`app_sub_requirement_name = ${dto.appSubRequirementName}`);
     if (dto.appStatus !== undefined) setParts.push(sql`app_status = ${dto.appStatus || null}`);
@@ -171,6 +173,7 @@ export class SubRequirementService {
     if (setParts.length === 0) {
       return this.getDetail(id);
     }
+    setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
 
     const result = await this.db.execute(
       sql`UPDATE sub_requirement_item SET ${sql.join(setParts, sql`, `)} WHERE ${

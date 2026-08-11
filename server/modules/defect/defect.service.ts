@@ -152,7 +152,8 @@ export class DefectService {
     const result = await this.db.execute(
       sql`INSERT INTO defect_item (
         defect_name, status, severity, priority, current_owner, business_line,
-        rejection_reason, discovery_environment, testing_stage, creator, detail, app_parent_order
+        rejection_reason, discovery_environment, testing_stage, creator, detail, app_parent_order,
+        _created_by, _updated_by
       ) VALUES (
         ${dto.defectName},
         ${dto.status || null},
@@ -165,14 +166,16 @@ export class DefectService {
         ${dto.testingStage || null},
         ${userId ? sql`ROW(${userId})::user_profile` : null},
         ${dto.detail || null},
-        ${dto.appParentOrder ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(CAST(${dto.appParentOrder} AS text)))` : null}
+        ${dto.appParentOrder ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(CAST(${dto.appParentOrder} AS text)))` : null},
+        ${userId ? sql`ROW(${userId})::user_profile` : null},
+        ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
     return this.getDetail(rows[0].id);
   }
 
-  async update(id: string, dto: UpdateDefectDto): Promise<DefectItem> {
+  async update(id: string, dto: UpdateDefectDto, userId: string): Promise<DefectItem> {
     const setParts: any[] = [];
     if (dto.defectName !== undefined) setParts.push(sql`defect_name = ${dto.defectName}`);
     if (dto.status !== undefined) setParts.push(sql`status = ${dto.status || null}`);
@@ -195,6 +198,7 @@ export class DefectService {
     if (setParts.length === 0) {
       return this.getDetail(id);
     }
+    setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
 
     const result = await this.db.execute(
       sql`UPDATE defect_item SET ${sql.join(setParts, sql`, `)} WHERE ${

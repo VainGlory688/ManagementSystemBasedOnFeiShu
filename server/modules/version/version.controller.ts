@@ -73,9 +73,10 @@ export class VersionController {
   @Put(':id')
   async update(
     @Param('id') id: string,
+    @Req() req: Request,
     @Body() dto: UpdateVersionDto,
   ): Promise<MainVersion> {
-    return this.versionService.update(id, dto);
+    return this.versionService.update(id, dto, req.userContext.userId);
   }
 
   @NeedLogin()

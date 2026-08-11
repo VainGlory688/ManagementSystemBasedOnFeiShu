@@ -72,18 +72,20 @@ export class RequirementController {
   @Put(':id')
   async update(
     @Param('id') id: string,
+    @Req() req: Request,
     @Body() dto: UpdateRequirementDto,
   ): Promise<VersionRequirement> {
-    return this.requirementService.update(id, dto);
+    return this.requirementService.update(id, dto, req.userContext.userId);
   }
 
   @NeedLogin()
   @Put(':id/pipeline')
   async updatePipeline(
     @Param('id') id: string,
+    @Req() req: Request,
     @Body() dto: UpdateRequirementPipelineDto,
   ): Promise<RequirementPipelineConfig> {
-    return this.requirementService.updatePipeline(id, dto);
+    return this.requirementService.updatePipeline(id, dto, req.userContext.userId);
   }
 
   @NeedLogin()
