@@ -21,6 +21,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { RowActions } from '@/components/RowActions';
 import {
   Pagination,
   PaginationContent,
@@ -551,31 +552,14 @@ const VersionListPage = () => {
                       )}
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openEditDialog(v);
-                          }}
-                        >
-                          编辑
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeletingItem(v);
-                            setDeleteConfirmOpen(true);
-                          }}
-                        >
-                          删除
-                        </Button>
-                      </div>
+                      <RowActions
+                        label={`版本：${v.versionName}`}
+                        onEdit={() => openEditDialog(v)}
+                        onDelete={() => {
+                          setDeletingItem(v);
+                          setDeleteConfirmOpen(true);
+                        }}
+                      />
                     </TableCell>
                   </TableRow>
                 );

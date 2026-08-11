@@ -12,6 +12,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { RowActions } from '@/components/RowActions';
 import {
   Pagination,
   PaginationContent,
@@ -466,31 +467,14 @@ const TestPlanListPage = () => {
                     {item.relatedVersionName || item.relatedVersion || '-'}
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openEditDialog(item);
-                        }}
-                      >
-                        编辑
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeletingItem(item);
-                          setDeleteConfirmOpen(true);
-                        }}
-                      >
-                        删除
-                      </Button>
-                    </div>
+                    <RowActions
+                      label={`测试计划：${item.planName}`}
+                      onEdit={() => openEditDialog(item)}
+                      onDelete={() => {
+                        setDeletingItem(item);
+                        setDeleteConfirmOpen(true);
+                      }}
+                    />
                   </TableCell>
                 </TableRow>
               ))}

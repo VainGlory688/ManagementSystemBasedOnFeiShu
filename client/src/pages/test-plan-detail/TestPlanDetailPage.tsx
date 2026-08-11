@@ -4,8 +4,16 @@ import { ArrowLeft, Calendar, Tag, Users, Layers, AlertTriangle } from 'lucide-r
 import { logger } from '@lark-apaas/client-toolkit/logger';
 
 import { Button } from '@/components/ui/button';
-import { getTestPlanDetail } from '@/api/test-plan';
-import type { TestPlan } from '@shared/api.interface';
+import { Input } from '@/components/ui/input';
+import { InlineEditableField } from '@/components/InlineEditableField';
+import { DirectSelectField } from '@/components/DirectSelectField';
+import { useFieldOptions } from '@/hooks/useFieldOptions';
+import { LabelBadge } from '@/components/LabelBadge';
+import { UserSelect } from '@/components/business-ui/user-select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { getTestPlanDetail, updateTestPlan } from '@/api/test-plan';
+import { getVersionList } from '@/api/version';
+import type { TestPlan, UpdateTestPlanDto } from '@shared/api.interface';
 
 import { TestStatusProgress } from '../test-plan-list/TestStatusProgress';
 import { ExecutorAvatarStack } from '../test-plan-list/ExecutorAvatarStack';
@@ -18,6 +26,17 @@ const TestPlanDetailPage = () => {
   const [data, setData] = useState<TestPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [versionOptions, setVersionOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const { options } = useFieldOptions();
+
+  useEffect(() => {
+    getVersionList({ pageSize: 200 })
+      .then((response) => setVersionOptions(response.items.map((version) => ({
+        value: version.baseRecordId || version.id,
+        label: version.versionName,
+      }))))
+      .catch(() => setVersionOptions([]));
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -57,6 +76,11 @@ const TestPlanDetailPage = () => {
     );
   }
 
+  const saveField = async <K extends keyof TestPlan>(field: K, value: TestPlan[K]) => {
+    const updated = await updateTestPlan(data.id, { [field]: value } as UpdateTestPlanDto);
+    setData(updated);
+  };
+
   return (
     <div className="flex flex-col gap-6 max-w-[1200px] mx-auto" data-ai-section-type="card-list">
       {/* Header */}
@@ -77,17 +101,29 @@ const TestPlanDetailPage = () => {
         <div className="flex items-start justify-between gap-6">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-2">
-              <h1 className="text-2xl font-heading font-semibold text-foreground truncate">
-                {data.planName}
-              </h1>
-              <PriorityBadge priority={data.priority} />
+              <InlineEditableField
+                value={data.planName}
+                onSave={(value) => saveField('planName', value)}
+                renderEditor={(value, onChange) => <Input value={value} onChange={(event) => onChange(event.target.value)} />}
+              >
+                <h1 className="text-2xl font-heading font-semibold text-foreground truncate">{data.planName}</h1>
+              </InlineEditableField>
+              <DirectSelectField
+                value={data.priority}
+                options={options.test_plan_priority || []}
+                onChange={(value) => saveField('priority', value)}
+              ><PriorityBadge priority={data.priority} /></DirectSelectField>
             </div>
             <div className="text-sm text-muted-foreground font-mono">
               ID: {data.baseRecordId || data.id}
             </div>
           </div>
           <div className="shrink-0 w-[260px]">
-            <TestStatusProgress status={data.testStatus} />
+            <DirectSelectField
+              value={data.testStatus}
+              options={options.test_plan_status || []}
+              onChange={(value) => saveField('testStatus', value)}
+            ><TestStatusProgress status={data.testStatus} /></DirectSelectField>
           </div>
         </div>
       </div>
@@ -101,10 +137,30 @@ const TestPlanDetailPage = () => {
             <h2 className="text-sm font-heading font-semibold text-foreground">基本信息</h2>
           </div>
           <div className="space-y-3">
-            <InfoRow label="测试状态" value={data.testStatus || '-'} />
-            <InfoRow label="优先级" value={data.priority || '-'} />
-            <InfoRow label="计划类型" value={data.testPlanType || '-'} />
-            <InfoRow label="业务线" value={data.businessLine || '-'} />
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">测试状态</span>
+              <DirectSelectField value={data.testStatus} options={options.test_plan_status || []} onChange={(value) => saveField('testStatus', value)}>
+                <TestStatusProgress status={data.testStatus} />
+              </DirectSelectField>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">优先级</span>
+              <DirectSelectField value={data.priority} options={options.test_plan_priority || []} onChange={(value) => saveField('priority', value)}>
+                <PriorityBadge priority={data.priority} />
+              </DirectSelectField>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">计划类型</span>
+              <DirectSelectField value={data.testPlanType} options={options.test_plan_type || []} onChange={(value) => saveField('testPlanType', value)}>
+                <LabelBadge type="testPlanType" value={data.testPlanType} />
+              </DirectSelectField>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">业务线</span>
+              <DirectSelectField value={data.businessLine} options={options.test_plan_business_line || []} onChange={(value) => saveField('businessLine', value)}>
+                <LabelBadge type="businessLine" value={data.businessLine} />
+              </DirectSelectField>
+            </div>
           </div>
         </div>
 
@@ -117,7 +173,13 @@ const TestPlanDetailPage = () => {
           <div className="space-y-3">
             <div className="flex items-center gap-3">
               <span className="text-xs text-muted-foreground w-20 shrink-0">执行人</span>
-              <ExecutorAvatarStack userIds={data.executor} max={5} size="medium" />
+              <InlineEditableField
+                value={data.executor}
+                onSave={(value) => saveField('executor', value)}
+                renderEditor={(value, onChange) => <UserSelect multiple value={value} onChange={(next) => onChange(next || [])} triggerType="search" placeholder="请选择执行人" />}
+              >
+                <ExecutorAvatarStack userIds={data.executor} max={5} size="medium" />
+              </InlineEditableField>
             </div>
             {data.executor.length > 0 && (
               <div className="text-xs text-muted-foreground pl-[88px]">
@@ -134,8 +196,16 @@ const TestPlanDetailPage = () => {
             <h2 className="text-sm font-heading font-semibold text-foreground">时间节点</h2>
           </div>
           <div className="space-y-3">
-            <InfoRow label="预计开始" value={data.expectedStartDate || '-'} mono />
-            <InfoRow label="预计结束" value={data.expectedEndDate || '-'} mono />
+            <InlineEditableField
+              value={data.expectedStartDate}
+              onSave={(value) => saveField('expectedStartDate', value)}
+              renderEditor={(value, onChange) => <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} />}
+            ><InfoRow label="预计开始" value={data.expectedStartDate || '-'} mono /></InlineEditableField>
+            <InlineEditableField
+              value={data.expectedEndDate}
+              onSave={(value) => saveField('expectedEndDate', value)}
+              renderEditor={(value, onChange) => <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} />}
+            ><InfoRow label="预计结束" value={data.expectedEndDate || '-'} mono /></InlineEditableField>
           </div>
         </div>
 
@@ -146,19 +216,25 @@ const TestPlanDetailPage = () => {
             <h2 className="text-sm font-heading font-semibold text-foreground">关联版本</h2>
           </div>
           <div className="space-y-3">
-            {data.relatedVersion ? (
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-muted-foreground w-20 shrink-0">版本名称</span>
-                <Link
-                  to={`/versions/${data.relatedVersion}`}
-                  className="text-sm text-primary hover:underline truncate"
-                >
-                  {data.relatedVersionName || data.relatedVersion}
-                </Link>
-              </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">暂无关联版本</div>
-            )}
+            <InlineEditableField
+              value={data.relatedVersion || ''}
+              onSave={(value) => saveField('relatedVersion', value)}
+              renderEditor={(value, onChange) => (
+                <Select value={value || undefined} onValueChange={onChange}>
+                  <SelectTrigger><SelectValue placeholder="请选择关联版本" /></SelectTrigger>
+                  <SelectContent>{versionOptions.map((version) => <SelectItem key={version.value} value={version.value}>{version.label}</SelectItem>)}</SelectContent>
+                </Select>
+              )}
+            >
+              {data.relatedVersion ? (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground w-20 shrink-0">版本名称</span>
+                  <Link to={`/versions/${data.relatedVersion}`} className="text-sm text-primary hover:underline truncate">
+                    {data.relatedVersionName || data.relatedVersion}
+                  </Link>
+                </div>
+              ) : <div className="text-sm text-muted-foreground">暂无关联版本</div>}
+            </InlineEditableField>
           </div>
         </div>
       </div>

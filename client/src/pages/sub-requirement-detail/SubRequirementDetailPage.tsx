@@ -3,12 +3,18 @@ import { Link, useParams } from 'react-router-dom';
 import { ChevronRight, FileText, Loader2 } from 'lucide-react';
 import { logger } from '@lark-apaas/client-toolkit/logger';
 
-import { getSubRequirementDetail } from '@/api/sub-requirement';
+import { getSubRequirementDetail, updateSubRequirement } from '@/api/sub-requirement';
 import { UserDisplay } from '@/components/business-ui/user-display';
+import { UserSelect } from '@/components/business-ui/user-select';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { InlineEditableField } from '@/components/InlineEditableField';
+import { DirectSelectField } from '@/components/DirectSelectField';
+import { useFieldOptions } from '@/hooks/useFieldOptions';
 import { cn } from '@/lib/utils';
-import type { SubRequirementItem } from '@shared/api.interface';
+import type { SubRequirementItem, UpdateSubRequirementDto } from '@shared/api.interface';
 
 function getStatusBadgeClass(status: string): string {
   if (['已完成', '已上线'].includes(status)) {
@@ -58,6 +64,7 @@ const SubRequirementDetailPage = () => {
   const { id = '' } = useParams<{ id: string }>();
   const [detail, setDetail] = useState<SubRequirementItem | null>(null);
   const [loading, setLoading] = useState(true);
+  const { options } = useFieldOptions();
 
   useEffect(() => {
     if (!id) return;
@@ -92,6 +99,17 @@ const SubRequirementDetailPage = () => {
     return <div className="py-20 text-center text-muted-foreground">子需求不存在或已删除</div>;
   }
 
+  const saveField = async <K extends keyof SubRequirementItem>(
+    field: K,
+    value: SubRequirementItem[K],
+  ) => {
+    const updated = await updateSubRequirement(
+      detail.id,
+      { [field]: value } as UpdateSubRequirementDto,
+    );
+    setDetail(updated);
+  };
+
   const parentLink = detail.appParentWorkItemRecordId
     ? `/requirements/${detail.appParentWorkItemRecordId}`
     : '/requirements';
@@ -111,28 +129,58 @@ const SubRequirementDetailPage = () => {
       </nav>
 
       <div className="flex items-start gap-3 flex-wrap">
-        <h1 className="text-2xl font-heading font-semibold text-foreground tracking-tight">
-          {detail.appSubRequirementName}
-        </h1>
-        <Badge className={cn('h-[22px] px-2.5 text-[11px] font-medium rounded-full mt-1.5', getStatusBadgeClass(detail.appStatus))}>
-          {detail.appStatus || '-'}
-        </Badge>
-        <Badge className={cn('h-[22px] px-2.5 text-[11px] font-semibold rounded-full mt-1.5', getPriorityBadgeClass(detail.appPriority))}>
-          {detail.appPriority || '-'}
-        </Badge>
+        <InlineEditableField
+          value={detail.appSubRequirementName}
+          onSave={(value) => saveField('appSubRequirementName', value)}
+          renderEditor={(value, onChange) => <Input value={value} onChange={(event) => onChange(event.target.value)} />}
+        >
+          <h1 className="text-2xl font-heading font-semibold text-foreground tracking-tight">{detail.appSubRequirementName}</h1>
+        </InlineEditableField>
+        <DirectSelectField
+          value={detail.appStatus}
+          options={options.sub_req_status || []}
+          onChange={(value) => saveField('appStatus', value)}
+        >
+          <Badge className={cn('h-[22px] px-2.5 text-[11px] font-medium rounded-full', getStatusBadgeClass(detail.appStatus))}>{detail.appStatus || '-'}</Badge>
+        </DirectSelectField>
+        <DirectSelectField
+          value={detail.appPriority}
+          options={options.sub_req_priority || []}
+          onChange={(value) => saveField('appPriority', value)}
+        >
+          <Badge className={cn('h-[22px] px-2.5 text-[11px] font-semibold rounded-full', getPriorityBadgeClass(detail.appPriority))}>{detail.appPriority || '-'}</Badge>
+        </DirectSelectField>
       </div>
 
       <Card className="rounded-sm shadow-none border border-border">
         <CardContent className="p-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <InfoItem label="当前负责人">
-              {detail.appCurrentOwner ? <UserDisplay value={[detail.appCurrentOwner]} size="small" /> : '-'}
+              <InlineEditableField
+                value={detail.appCurrentOwner || ''}
+                onSave={(value) => saveField('appCurrentOwner', value)}
+                renderEditor={(value, onChange) => <UserSelect value={value || null} onChange={(next) => onChange(next || '')} triggerType="search" placeholder="请选择负责人" />}
+              >
+                {detail.appCurrentOwner ? <UserDisplay value={[detail.appCurrentOwner]} size="small" /> : '-'}
+              </InlineEditableField>
             </InfoItem>
             <InfoItem label="预计开始">
-              <span className="font-mono">{formatDate(detail.appExpectedStartDate)}</span>
+              <InlineEditableField
+                value={detail.appExpectedStartDate}
+                onSave={(value) => saveField('appExpectedStartDate', value)}
+                renderEditor={(value, onChange) => <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} />}
+              >
+                <span className="font-mono">{formatDate(detail.appExpectedStartDate)}</span>
+              </InlineEditableField>
             </InfoItem>
             <InfoItem label="预计结束">
-              <span className="font-mono">{formatDate(detail.appExpectedEndDate)}</span>
+              <InlineEditableField
+                value={detail.appExpectedEndDate}
+                onSave={(value) => saveField('appExpectedEndDate', value)}
+                renderEditor={(value, onChange) => <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} />}
+              >
+                <span className="font-mono">{formatDate(detail.appExpectedEndDate)}</span>
+              </InlineEditableField>
             </InfoItem>
             <InfoItem label="逾期天数">
               {detail.appOverdueDays > 0 ? (
@@ -151,9 +199,17 @@ const SubRequirementDetailPage = () => {
             <FileText className="size-4 text-primary" />
             <h2 className="text-sm font-semibold text-foreground">子需求详情</h2>
           </div>
-          <div className="min-h-[120px] whitespace-pre-wrap rounded-sm border border-border/60 bg-background/60 p-4 text-sm leading-relaxed text-foreground/90">
-            {detail.appDetails || '暂无详情描述'}
-          </div>
+          <InlineEditableField
+            value={detail.appDetails || ''}
+            onSave={(value) => saveField('appDetails', value)}
+            renderEditor={(value, onChange) => (
+              <Textarea value={value} rows={5} onChange={(event) => onChange(event.target.value)} />
+            )}
+          >
+            <div className="min-h-[120px] whitespace-pre-wrap rounded-sm border border-border/60 bg-background/60 p-4 text-sm leading-relaxed text-foreground/90">
+              {detail.appDetails || '暂无详情描述'}
+            </div>
+          </InlineEditableField>
         </CardContent>
       </Card>
     </div>

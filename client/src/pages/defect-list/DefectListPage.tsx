@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/pagination';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { RowActions } from '@/components/RowActions';
 import { Badge } from '@/components/ui/badge';
 import { UserDisplay } from '@/components/business-ui/user-display';
 import { cn } from '@/lib/utils';
@@ -534,31 +535,14 @@ const DefectListPage = () => {
                         {new Date(item.createdAt).toLocaleDateString('zh-CN')}
                       </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEditDialog(item);
-                            }}
-                          >
-                            编辑
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeletingItem(item);
-                              setDeleteConfirmOpen(true);
-                            }}
-                          >
-                            删除
-                          </Button>
-                        </div>
+                        <RowActions
+                          label={`缺陷：${item.defectName}`}
+                          onEdit={() => openEditDialog(item)}
+                          onDelete={() => {
+                            setDeletingItem(item);
+                            setDeleteConfirmOpen(true);
+                          }}
+                        />
                       </TableCell>
                     </TableRow>
                   );

@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Pencil, Trash2 } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { logger } from '@lark-apaas/client-toolkit/logger';
 
 import {
@@ -12,7 +12,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { RowActions } from '@/components/RowActions';
 import { UserDisplay } from '@/components/business-ui/user-display';
 import { cn } from '@/lib/utils';
 import type { SubRequirementItem } from '@shared/api.interface';
@@ -197,30 +197,11 @@ const SubRequirementTable = ({ items, loading, onEdit, onDelete }: SubRequiremen
                   </TableCell>
                   {(onEdit || onDelete) && (
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        {onEdit && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-7"
-                            onClick={() => onEdit(item)}
-                            aria-label={`编辑子需求：${item.appSubRequirementName}`}
-                          >
-                            <Pencil className="size-3.5" />
-                          </Button>
-                        )}
-                        {onDelete && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-7 text-destructive hover:text-destructive"
-                            onClick={() => onDelete(item)}
-                            aria-label={`删除子需求：${item.appSubRequirementName}`}
-                          >
-                            <Trash2 className="size-3.5" />
-                          </Button>
-                        )}
-                      </div>
+                      <RowActions
+                        label={`子需求：${item.appSubRequirementName}`}
+                        onEdit={onEdit ? () => onEdit(item) : undefined}
+                        onDelete={onDelete ? () => onDelete(item) : undefined}
+                      />
                     </TableCell>
                   )}
                 </TableRow>

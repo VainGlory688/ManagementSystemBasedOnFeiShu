@@ -5,6 +5,11 @@ import { logger } from '@lark-apaas/client-toolkit/logger';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { InlineEditableField } from '@/components/InlineEditableField';
+import { DirectSelectField } from '@/components/DirectSelectField';
+import { useFieldOptions } from '@/hooks/useFieldOptions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -12,8 +17,9 @@ import {
   getVersionDetail,
   getVersionRequirements,
   getVersionSummary,
+  updateVersion,
 } from '@/api/version';
-import type { MainVersion, VersionRequirement, VersionSummary } from '@shared/api.interface';
+import type { MainVersion, UpdateVersionDto, VersionRequirement, VersionSummary } from '@shared/api.interface';
 import {
   buildMilestones,
   getPriorityInfo,
@@ -34,6 +40,7 @@ const VersionDetailPage = () => {
   const [loading, setLoading] = useState(true);
   const [reqLoading, setReqLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { options } = useFieldOptions();
 
   useEffect(() => {
     if (!id) return;
@@ -75,6 +82,11 @@ const VersionDetailPage = () => {
   const statusInfo = version ? getStatusInfo(version.appStatus) : null;
   const prioInfo = version ? getPriorityInfo(version.priority) : null;
   const highRisk = version ? isHighRisk(version) : false;
+  const saveField = async <K extends keyof MainVersion>(field: K, value: MainVersion[K]) => {
+    if (!version) return;
+    const updated = await updateVersion(version.id, { [field]: value } as UpdateVersionDto);
+    setVersion(updated);
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -113,34 +125,29 @@ const VersionDetailPage = () => {
             </>
           ) : (
             <>
-              <h2 className="text-2xl font-heading font-semibold text-foreground tracking-tight">
-                {version?.versionName}
-              </h2>
-
-              {statusInfo && (
-                <Badge
-                  variant="outline"
-                  className={[
-                    'h-6 px-3 text-sm font-medium rounded-full',
-                    statusInfo.className,
-                  ].join(' ')}
+              {version && (
+                <InlineEditableField
+                  value={version.versionName}
+                  onSave={(value) => saveField('versionName', value)}
+                  renderEditor={(value, onChange) => <Input value={value} onChange={(event) => onChange(event.target.value)} />}
                 >
-                  <span className={`size-1.5 rounded-full mr-1.5 ${statusInfo.dot}`} />
-                  {statusInfo.label}
-                </Badge>
+                  <h2 className="text-2xl font-heading font-semibold text-foreground tracking-tight">{version.versionName}</h2>
+                </InlineEditableField>
               )}
 
-              {prioInfo && (
-                <span
-                  className={[
-                    'inline-flex items-center h-6 px-2.5 rounded-full text-xs font-semibold border',
-                    prioInfo.bg,
-                    prioInfo.fg,
-                    prioInfo.border,
-                  ].join(' ')}
-                >
-                  {prioInfo.label}
-                </span>
+              {version && statusInfo && (
+                <DirectSelectField value={version.appStatus} options={options.version_status || []} onChange={(value) => saveField('appStatus', value)}>
+                  <Badge variant="outline" className={`h-6 px-3 text-sm font-medium rounded-full ${statusInfo.className}`}>
+                    <span className={`mr-1.5 size-1.5 rounded-full ${statusInfo.dot}`} />
+                    {statusInfo.label}
+                  </Badge>
+                </DirectSelectField>
+              )}
+
+              {version && prioInfo && (
+                <DirectSelectField value={version.priority} options={options.version_priority || []} onChange={(value) => saveField('priority', value)}>
+                  <span className={`inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-semibold ${prioInfo.bg} ${prioInfo.fg} ${prioInfo.border}`}>{prioInfo.label}</span>
+                </DirectSelectField>
               )}
 
               {highRisk && (
@@ -153,11 +160,18 @@ const VersionDetailPage = () => {
           )}
         </div>
 
-        {version?.versionRisk && (
-          <p className="mt-3 text-sm text-muted-foreground max-w-3xl">
-            <span className="font-medium text-foreground/80">风险摘要：</span>
-            {version.versionRisk}
-          </p>
+        {version && (
+          <InlineEditableField
+            value={version.versionRisk || ''}
+            className="mt-3 max-w-3xl"
+            onSave={(value) => saveField('versionRisk', value)}
+            renderEditor={(value, onChange) => <Textarea value={value} rows={3} onChange={(event) => onChange(event.target.value)} />}
+          >
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground/80">风险摘要：</span>
+              {version.versionRisk || '暂无风险摘要'}
+            </p>
+          </InlineEditableField>
         )}
       </div>
 

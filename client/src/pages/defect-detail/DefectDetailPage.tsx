@@ -16,7 +16,11 @@ import {
 import { logger } from '@lark-apaas/client-toolkit/logger';
 
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { InlineEditableField } from '@/components/InlineEditableField';
+import { DirectSelectField } from '@/components/DirectSelectField';
+import { useFieldOptions } from '@/hooks/useFieldOptions';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -25,76 +29,13 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { UserDisplay } from '@/components/business-ui/user-display';
+import { UserSelect } from '@/components/business-ui/user-select';
 import { LabelBadge } from '@/components/LabelBadge';
-import { cn } from '@/lib/utils';
 
-import { getDefectDetail } from '@/api/defect';
-import type { DefectItem } from '@shared/api.interface';
+import { getDefectDetail, updateDefect } from '@/api/defect';
+import type { DefectItem, UpdateDefectDto } from '@shared/api.interface';
 import { UniversalLink } from '@lark-apaas/client-toolkit/components/UniversalLink';
-
-// ---------- Badge class helpers (shared with list page) ----------
-
-function severityBadgeClass(severity: string): string {
-  switch (severity) {
-    case '致命':
-    case '紧急':
-      return 'bg-severity-fatal text-white border-transparent';
-    case '严重':
-      return 'bg-[hsl(38_90%_50%)] text-[hsl(38_100%_12%)] border-transparent';
-    case '一般':
-      return 'bg-[hsl(160_55%_42%)] text-white border-transparent';
-    case '优化':
-    case '提示':
-      return 'bg-[hsl(270_45%_55%)] text-white border-transparent';
-    default:
-      return 'bg-secondary text-secondary-foreground border-transparent';
-  }
-}
-
-function priorityBadgeClass(priority: string): string {
-  switch (priority) {
-    case 'P0':
-      return 'bg-priority-p0 text-priority-p0-foreground border-transparent';
-    case 'P1':
-      return 'bg-priority-p1 text-priority-p1-foreground border-transparent';
-    case 'P2':
-      return 'bg-priority-p2 text-[hsl(40_100%_12%)] border-transparent';
-    case '待定':
-      return 'bg-transparent text-muted-foreground border-border';
-    case '历史遗留':
-      return 'bg-priority-p3-bg text-priority-p3 border-transparent';
-    default:
-      return 'bg-secondary text-secondary-foreground border-transparent';
-  }
-}
-
-function statusBadgeClass(status: string): string {
-  if (status === '新问题') {
-    return 'bg-muted text-muted-foreground border-transparent';
-  }
-  if (status === '提交测试') {
-    return 'bg-[hsl(38_70%_93%)] text-[hsl(38_90%_42%)] border-transparent';
-  }
-  if (status === '测试未通过') {
-    return 'bg-severity-fatal-bg text-severity-fatal border-transparent';
-  }
-  if (status === '已关闭') {
-    return 'bg-[hsl(160_40%_94%)] text-[hsl(160_55%_32%)] border-transparent';
-  }
-  if (status === '重新打开') {
-    return 'bg-[hsl(270_45%_94%)] text-[hsl(270_45%_38%)] border-transparent';
-  }
-  if (['已修复', '验证通过', '已关闭'].includes(status)) {
-    return 'bg-[hsl(160_40%_94%)] text-[hsl(160_55%_32%)] border-transparent';
-  }
-  if (status === '已驳回') {
-    return 'bg-severity-fatal-bg text-severity-fatal border-transparent';
-  }
-  if (['新建', '处理中'].includes(status)) {
-    return 'bg-[hsl(38_70%_93%)] text-[hsl(38_90%_42%)] border-transparent';
-  }
-  return 'bg-secondary text-secondary-foreground border-transparent';
-}
+import { PillBadge } from '../defect-list/badge-helpers';
 
 // ---------- Info row ----------
 
@@ -167,6 +108,7 @@ const DefectDetailPage = () => {
   const { id } = useParams<{ id: string }>();
   const [defect, setDefect] = useState<DefectItem | null>(null);
   const [loading, setLoading] = useState(true);
+  const { options } = useFieldOptions();
 
   useEffect(() => {
     if (!id) return;
@@ -209,6 +151,10 @@ const DefectDetailPage = () => {
   const createdDate = defect.createdAt
     ? new Date(defect.createdAt).toLocaleString('zh-CN')
     : '-';
+  const saveField = async <K extends keyof DefectItem>(field: K, value: DefectItem[K]) => {
+    const updated = await updateDefect(defect.id, { [field]: value } as UpdateDefectDto);
+    setDefect(updated);
+  };
 
   return (
     <div className="flex flex-col gap-4 h-full">
@@ -242,42 +188,26 @@ const DefectDetailPage = () => {
               <div className="text-xs font-mono text-muted-foreground mb-2">
                 #{defect.baseRecordId?.slice(0, 8)}
               </div>
-              <h1 className="font-heading text-2xl font-semibold text-foreground leading-snug tracking-tight">
-                {defect.defectName}
-              </h1>
+              <InlineEditableField
+                value={defect.defectName}
+                onSave={(value) => saveField('defectName', value)}
+                renderEditor={(value, onChange) => <Input value={value} onChange={(event) => onChange(event.target.value)} />}
+              >
+                <h1 className="font-heading text-2xl font-semibold text-foreground leading-snug tracking-tight">{defect.defectName}</h1>
+              </InlineEditableField>
             </div>
 
             {/* Badges */}
             <div className="flex flex-wrap gap-2 mt-4">
-              <Badge
-                className={cn(
-                  'h-6 px-3 text-xs font-medium rounded-full',
-                  statusBadgeClass(defect.status)
-                )}
-              >
-                {defect.status}
-              </Badge>
-              <Badge
-                className={cn(
-                  'h-6 px-3 text-xs font-medium rounded-full',
-                  severityBadgeClass(defect.severity)
-                )}
-                style={
-                  isHighRisk
-                    ? { animation: 'grow-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) 200ms both' }
-                    : undefined
-                }
-              >
-                {defect.severity}
-              </Badge>
-              <Badge
-                className={cn(
-                  'h-6 px-3 text-xs font-medium rounded-full font-mono',
-                  priorityBadgeClass(defect.priority)
-                )}
-              >
-                {defect.priority}
-              </Badge>
+              <DirectSelectField value={defect.status} options={options.defect_status || []} onChange={(value) => saveField('status', value)}>
+                <PillBadge text={defect.status} variant="status" />
+              </DirectSelectField>
+              <DirectSelectField value={defect.severity} options={options.defect_severity || []} onChange={(value) => saveField('severity', value)}>
+                <PillBadge text={defect.severity} variant="severity" className={isHighRisk ? 'animate-grow-in' : undefined} />
+              </DirectSelectField>
+              <DirectSelectField value={defect.priority} options={options.defect_priority || []} onChange={(value) => saveField('priority', value)}>
+                <PillBadge text={defect.priority} variant="priority" mono />
+              </DirectSelectField>
             </div>
 
             <div className="border-t mt-6" />
@@ -285,16 +215,28 @@ const DefectDetailPage = () => {
             {/* Info list */}
             <div className="divide-y divide-border/70 -my-3">
               <InfoRow icon={User} label="当前负责人" delay={300}>
-                <UserDisplay value={defect.currentOwner} size="small" />
+                <InlineEditableField
+                  value={defect.currentOwner}
+                  onSave={(value) => saveField('currentOwner', value)}
+                  renderEditor={(value, onChange) => <UserSelect multiple value={value} onChange={(next) => onChange(next || [])} triggerType="search" placeholder="请选择负责人" />}
+                >
+                  <UserDisplay value={defect.currentOwner} size="small" />
+                </InlineEditableField>
               </InfoRow>
               <InfoRow icon={Layers} label="业务线" delay={380}>
-                <LabelBadge type="businessLine" value={defect.businessLine} />
+                <DirectSelectField value={defect.businessLine} options={options.defect_business_line || []} onChange={(value) => saveField('businessLine', value)}>
+                  <LabelBadge type="businessLine" value={defect.businessLine} />
+                </DirectSelectField>
               </InfoRow>
               <InfoRow icon={Monitor} label="发现环境" delay={460}>
-                <LabelBadge type="environment" value={defect.discoveryEnvironment} />
+                <DirectSelectField value={defect.discoveryEnvironment} options={options.defect_discovery_environment || []} onChange={(value) => saveField('discoveryEnvironment', value)}>
+                  <LabelBadge type="environment" value={defect.discoveryEnvironment} />
+                </DirectSelectField>
               </InfoRow>
               <InfoRow icon={Beaker} label="测试阶段" delay={540}>
-                <LabelBadge type="testingStage" value={defect.testingStage} />
+                <DirectSelectField value={defect.testingStage} options={options.defect_testing_stage || []} onChange={(value) => saveField('testingStage', value)}>
+                  <LabelBadge type="testingStage" value={defect.testingStage} />
+                </DirectSelectField>
               </InfoRow>
               <InfoRow icon={User} label="创建人" delay={620}>
                 <UserDisplay value={defect.creator} size="small" />
@@ -405,15 +347,18 @@ const DefectDetailPage = () => {
                   缺陷详情
                 </h2>
               </div>
-              <div className="flex-1 overflow-auto min-h-0">
+              <InlineEditableField
+                value={defect.detail || ''}
+                className="flex-1 min-h-0"
+                onSave={(value) => saveField('detail', value)}
+                renderEditor={(value, onChange) => <Textarea value={value} rows={8} onChange={(event) => onChange(event.target.value)} />}
+              >
                 {defect.detail ? (
-                  <div className="text-sm text-foreground/85 leading-relaxed whitespace-pre-wrap">
-                    {defect.detail}
-                  </div>
+                  <div className="text-sm text-foreground/85 leading-relaxed whitespace-pre-wrap">{defect.detail}</div>
                 ) : (
                   <div className="text-sm text-muted-foreground">暂无详情描述</div>
                 )}
-              </div>
+              </InlineEditableField>
             </CardContent>
           </Card>
         </div>

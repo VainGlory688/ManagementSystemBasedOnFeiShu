@@ -3,10 +3,17 @@ import { Link, useParams } from 'react-router-dom';
 import { ChevronRight, Loader2, FileText, Plus } from 'lucide-react';
 import { logger } from '@lark-apaas/client-toolkit/logger';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { InlineEditableField } from '@/components/InlineEditableField';
+import { DirectSelectField } from '@/components/DirectSelectField';
+import { useFieldOptions } from '@/hooks/useFieldOptions';
 import { UserDisplay } from '@/components/business-ui/user-display';
+import { UserSelect } from '@/components/business-ui/user-select';
 import { LabelBadge } from '@/components/LabelBadge';
 import { cn } from '@/lib/utils';
 
@@ -16,8 +23,10 @@ import RequirementPipeline from './RequirementPipeline';
 import {
   getRequirementDetail,
   getSubRequirementList,
+  updateRequirement,
 } from '@/api/requirement';
-import type { VersionRequirement, SubRequirementItem } from '@shared/api.interface';
+import { getVersionList } from '@/api/version';
+import type { VersionRequirement, SubRequirementItem, UpdateRequirementDto } from '@shared/api.interface';
 
 const getPriorityBadgeClass = (priority: string): string => {
   switch (priority) {
@@ -60,6 +69,17 @@ const RequirementDetailPage = () => {
   const [subEditorOpen, setSubEditorOpen] = useState(false);
   const [editingSubItem, setEditingSubItem] = useState<SubRequirementItem | null>(null);
   const [deletingSubItem, setDeletingSubItem] = useState<SubRequirementItem | null>(null);
+  const [versionOptions, setVersionOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const { options } = useFieldOptions();
+
+  useEffect(() => {
+    getVersionList({ pageSize: 200 })
+      .then((response) => setVersionOptions(response.items.map((version) => ({
+        value: version.baseRecordId || version.id,
+        label: version.versionName,
+      }))))
+      .catch(() => setVersionOptions([]));
+  }, []);
 
   const loadSubItems = useCallback(() => {
     if (!id) return;
@@ -118,6 +138,17 @@ const RequirementDetailPage = () => {
     );
   }
 
+  const saveField = async <K extends keyof VersionRequirement>(
+    field: K,
+    value: VersionRequirement[K],
+  ) => {
+    const updated = await updateRequirement(
+      detail.id,
+      { [field]: value } as UpdateRequirementDto,
+    );
+    setDetail(updated);
+  };
+
   return (
     <div className="space-y-4 pb-8">
       {/* Breadcrumb */}
@@ -146,19 +177,20 @@ const RequirementDetailPage = () => {
       <div
         className="flex flex-wrap items-start gap-3 pl-2"
       >
-        <h1 className="text-2xl font-heading font-semibold text-foreground tracking-tight">
-          {detail.appReqName}
-        </h1>
-        <Badge
-          variant="default"
-          className={cn(
-            'h-[22px] px-2.5 text-[11px] font-semibold rounded-full mt-1.5',
-            getPriorityBadgeClass(detail.priority),
-            detail.priority === 'P0' && 'animate-pulse-soft',
-          )}
+        <InlineEditableField
+          value={detail.appReqName}
+          onSave={(value) => saveField('appReqName', value)}
+          renderEditor={(value, onChange) => <Input value={value} onChange={(event) => onChange(event.target.value)} />}
         >
-          {detail.priority || '-'}
-        </Badge>
+          <h1 className="text-2xl font-heading font-semibold text-foreground tracking-tight">{detail.appReqName}</h1>
+        </InlineEditableField>
+        <DirectSelectField
+          value={detail.priority}
+          options={options.req_priority || []}
+          onChange={(value) => saveField('priority', value)}
+        >
+          <Badge variant="default" className={cn('h-[22px] px-2.5 text-[11px] font-semibold rounded-full mt-1.5', getPriorityBadgeClass(detail.priority), detail.priority === 'P0' && 'animate-pulse-soft')}>{detail.priority || '-'}</Badge>
+        </DirectSelectField>
       </div>
 
       {/* Basic info card */}
@@ -166,26 +198,53 @@ const RequirementDetailPage = () => {
         <CardContent className="p-5">
           <div className="grid grid-cols-2 gap-3">
             <InfoItem label="负责人" delay={150}>
-              {detail.currentOwner ? (
-                <UserDisplay value={[detail.currentOwner]} size="small" />
-              ) : (
-                '-'
-              )}
+              <InlineEditableField
+                value={detail.currentOwner || ''}
+                onSave={(value) => saveField('currentOwner', value)}
+                renderEditor={(value, onChange) => <UserSelect value={value || null} onChange={(next) => onChange(next || '')} triggerType="search" placeholder="请选择负责人" />}
+              >
+                {detail.currentOwner ? <UserDisplay value={[detail.currentOwner]} size="small" /> : '-'}
+              </InlineEditableField>
             </InfoItem>
             <InfoItem label="需求类型" delay={200}>
-              <LabelBadge type="requirementType" value={detail.reqType} />
+              <DirectSelectField
+                value={detail.reqType}
+                options={options.req_type || []}
+                onChange={(value) => saveField('reqType', value)}
+              ><LabelBadge type="requirementType" value={detail.reqType} /></DirectSelectField>
             </InfoItem>
             <InfoItem label="业务线" delay={250}>
-              <LabelBadge type="businessLine" value={detail.businessLine} />
+              <DirectSelectField
+                value={detail.businessLine}
+                options={options.req_business_line || []}
+                onChange={(value) => saveField('businessLine', value)}
+              ><LabelBadge type="businessLine" value={detail.businessLine} /></DirectSelectField>
             </InfoItem>
             <InfoItem label="计划版本" delay={300}>
-              {detail.planningVersionName || '-'}
+              <InlineEditableField
+                value={detail.planningVersion}
+                onSave={(value) => saveField('planningVersion', value)}
+                renderEditor={(value, onChange) => (
+                  <Select value={value || undefined} onValueChange={onChange}>
+                    <SelectTrigger><SelectValue placeholder="请选择计划版本" /></SelectTrigger>
+                    <SelectContent>{versionOptions.map((version) => <SelectItem key={version.value} value={version.value}>{version.label}</SelectItem>)}</SelectContent>
+                  </Select>
+                )}
+              >
+                {detail.planningVersionName || '-'}
+              </InlineEditableField>
             </InfoItem>
             <InfoItem label="提出时间" delay={350}>
               <span className="font-mono">{formatDate(detail.proposalTime)}</span>
             </InfoItem>
             <InfoItem label="预计完成时间" delay={400}>
-              <span className="font-mono">{formatDate(detail.estimatedCompletionTime)}</span>
+              <InlineEditableField
+                value={detail.estimatedCompletionTime}
+                onSave={(value) => saveField('estimatedCompletionTime', value)}
+                renderEditor={(value, onChange) => <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} />}
+              >
+                <span className="font-mono">{formatDate(detail.estimatedCompletionTime)}</span>
+              </InlineEditableField>
             </InfoItem>
             <InfoItem label="创建人" delay={450}>
               {detail.creator ? (
@@ -209,12 +268,15 @@ const RequirementDetailPage = () => {
             <FileText className="size-4 text-primary" />
             <h2 className="text-sm font-semibold text-foreground">需求描述</h2>
           </div>
-          <div
-            className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap
-                       bg-background/60 rounded-sm p-4 border border-border/60 min-h-[100px]"
+          <InlineEditableField
+            value={detail.description || ''}
+            onSave={(value) => saveField('description', value)}
+            renderEditor={(value, onChange) => <Textarea value={value} rows={5} onChange={(event) => onChange(event.target.value)} />}
           >
-            {detail.description || '暂无需求描述'}
-          </div>
+            <div className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap bg-background/60 rounded-sm p-4 border border-border/60 min-h-[100px]">
+              {detail.description || '暂无需求描述'}
+            </div>
+          </InlineEditableField>
         </CardContent>
       </Card>
 

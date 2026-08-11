@@ -37,6 +37,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { RowActions } from '@/components/RowActions';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { UserSelect } from '@/components/business-ui/user-select';
@@ -434,31 +435,14 @@ const RequirementListPage = () => {
                         )}
                       </TableCell>
                       <TableCell className="w-[100px]" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEditDialog(item);
-                            }}
-                          >
-                            编辑
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeletingItem(item);
-                              setDeleteConfirmOpen(true);
-                            }}
-                          >
-                            删除
-                          </Button>
-                        </div>
+                        <RowActions
+                          label={`需求：${item.appReqName}`}
+                          onEdit={() => openEditDialog(item)}
+                          onDelete={() => {
+                            setDeletingItem(item);
+                            setDeleteConfirmOpen(true);
+                          }}
+                        />
                       </TableCell>
                     </TableRow>
                   );
