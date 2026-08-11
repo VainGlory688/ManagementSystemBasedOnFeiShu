@@ -26,7 +26,14 @@ import { cn } from '@/lib/utils';
 
 import RequirementFilterBar from './RequirementFilterBar';
 import { RequirementStatusBadge } from './RequirementStatusBadge';
-import { getRequirementList, createRequirement, updateRequirement, deleteRequirement, type RequirementListParams } from '@/api/requirement';
+import {
+  getRequirementList,
+  getSubRequirementList,
+  createRequirement,
+  updateRequirement,
+  deleteRequirement,
+  type RequirementListParams,
+} from '@/api/requirement';
 import type { VersionRequirement, CreateRequirementDto, UpdateRequirementDto } from '@shared/api.interface';
 import { getVersionList } from '@/api/version';
 import { toast } from 'sonner';
@@ -46,6 +53,7 @@ import { useFieldOptions } from '@/hooks/useFieldOptions';
 import { getPriorityRowClass } from '@/utils/version-helpers';
 
 const PAGE_SIZE = 10;
+const toDateInputValue = (value?: string) => value ? value.slice(0, 10) : '';
 
 type SortKey =
   | 'appReqName'
@@ -101,6 +109,7 @@ const RequirementListPage = () => {
   const [editingItem, setEditingItem] = useState<VersionRequirement | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletingItem, setDeletingItem] = useState<VersionRequirement | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const requirementSchema = z.object({
     appReqName: z.string().min(1, '需求名称不能为空'),
@@ -207,11 +216,29 @@ const RequirementListPage = () => {
 
   const handleEdit = async (data: RequirementFormData) => {
     if (!editingItem) return;
+    const original: RequirementFormData = {
+      appReqName: editingItem.appReqName,
+      priority: editingItem.priority || '',
+      reqType: editingItem.reqType || '',
+      businessLine: editingItem.businessLine || '',
+      planningVersion: editingItem.planningVersion || '',
+      currentOwner: editingItem.currentOwner || null,
+      proposalTime: toDateInputValue(editingItem.proposalTime),
+      estimatedCompletionTime: toDateInputValue(editingItem.estimatedCompletionTime),
+      description: editingItem.description || '',
+    };
+    const payload = Object.fromEntries(
+      Object.entries(data).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(original[key as keyof RequirementFormData])),
+    ) as unknown as UpdateRequirementDto;
+    if (Object.keys(payload).length === 0) {
+      toast.info('未检测到修改');
+      return;
+    }
     try {
       await updateRequirement(editingItem.id, {
-        ...data,
-        currentOwner: data.currentOwner || undefined,
-      } as UpdateRequirementDto);
+        ...payload,
+        ...(Object.prototype.hasOwnProperty.call(payload, 'currentOwner') && { currentOwner: payload.currentOwner || undefined }),
+      });
       toast.success('需求更新成功');
       setDialogOpen(false);
       setEditingItem(null);
@@ -224,8 +251,14 @@ const RequirementListPage = () => {
   };
 
   const handleDelete = async () => {
-    if (!deletingItem) return;
+    if (!deletingItem || isDeleting) return;
+    setIsDeleting(true);
     try {
+      const subRequirements = await getSubRequirementList(deletingItem.id, 1, 1);
+      if (subRequirements.total > 0) {
+        toast.error('需求下仍存在子需求，无法删除');
+        return;
+      }
       await deleteRequirement(deletingItem.id);
       toast.success('需求已删除');
       setDeleteConfirmOpen(false);
@@ -234,6 +267,8 @@ const RequirementListPage = () => {
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || '删除失败';
       toast.error(msg);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -262,8 +297,8 @@ const RequirementListPage = () => {
       businessLine: item.businessLine || '',
       planningVersion: item.planningVersion || '',
       currentOwner: item.currentOwner || null,
-      proposalTime: item.proposalTime || '',
-      estimatedCompletionTime: item.estimatedCompletionTime || '',
+      proposalTime: toDateInputValue(item.proposalTime),
+      estimatedCompletionTime: toDateInputValue(item.estimatedCompletionTime),
       description: item.description || '',
     });
     setDialogOpen(true);
@@ -626,7 +661,9 @@ const RequirementListPage = () => {
                 <Button type="button" variant="outline" onClick={() => { setDialogOpen(false); setEditingItem(null); form.reset(); }}>
                   取消
                 </Button>
-                <Button type="submit">{editingItem ? '保存' : '创建'}</Button>
+                <Button type="submit" disabled={form.formState.isSubmitting}>
+                  {form.formState.isSubmitting ? '提交中…' : editingItem ? '保存' : '创建'}
+                </Button>
               </div>
             </form>
           </Form>
@@ -646,8 +683,8 @@ const RequirementListPage = () => {
             <Button variant="outline" onClick={() => { setDeleteConfirmOpen(false); setDeletingItem(null); }}>
               取消
             </Button>
-            <Button variant="default" onClick={handleDelete}>
-              确认删除
+            <Button variant="default" onClick={handleDelete} disabled={isDeleting}>
+              {isDeleting ? '删除中…' : '确认删除'}
             </Button>
           </div>
         </DialogContent>

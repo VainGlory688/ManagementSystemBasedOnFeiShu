@@ -1,4 +1,10 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { and, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import { defectItem, versionRequirement } from '@server/database/schema';
@@ -29,6 +35,12 @@ const SEVERITY_ORDER: Record<string, number> = {
   '一般': 2,
   '提示': 3,
 };
+
+function requireName(value: unknown, field: string): void {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new BadRequestException(`${field}不能为空`);
+  }
+}
 
 @Injectable()
 export class DefectService {
@@ -146,6 +158,7 @@ export class DefectService {
   }
 
   async create(dto: CreateDefectDto, userId: string): Promise<DefectItem> {
+    requireName(dto.defectName, '缺陷名称');
     const ownerProfiles = dto.currentOwner && dto.currentOwner.length > 0
       ? sql`ARRAY[${sql.join(dto.currentOwner.map((id: string) => sql`ROW(${id})::user_profile`), sql`, `)}]::user_profile[]`
       : null;
@@ -176,6 +189,9 @@ export class DefectService {
   }
 
   async update(id: string, dto: UpdateDefectDto, userId: string): Promise<DefectItem> {
+    const defect = await this.getDetail(id);
+    if (dto.defectName !== undefined) requireName(dto.defectName, '缺陷名称');
+
     const setParts: any[] = [];
     if (dto.defectName !== undefined) setParts.push(sql`defect_name = ${dto.defectName}`);
     if (dto.status !== undefined) setParts.push(sql`status = ${dto.status || null}`);
@@ -196,32 +212,33 @@ export class DefectService {
     if (dto.appParentOrder !== undefined) setParts.push(sql`app_parent_order = ${dto.appParentOrder ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(CAST(${dto.appParentOrder} AS text)))` : null}`);
 
     if (setParts.length === 0) {
-      return this.getDetail(id);
+      return defect;
     }
     setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
+    setParts.push(sql`_updated_at = NOW()`);
 
     const result = await this.db.execute(
-      sql`UPDATE defect_item SET ${sql.join(setParts, sql`, `)} WHERE ${
-        isValidUuid(id)
-          ? sql`id = ${id} OR base_record_id = ${id}`
-          : sql`base_record_id = ${id}`
-      } RETURNING id`
+      sql`UPDATE defect_item SET ${sql.join(setParts, sql`, `)}
+        WHERE id = ${defect.id}
+          AND (
+            ${dto.expectedUpdatedAt || null}::timestamptz IS NULL
+            OR date_trunc('milliseconds', _updated_at)
+              = date_trunc('milliseconds', ${dto.expectedUpdatedAt || null}::timestamptz)
+          )
+        RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
     if (rows.length === 0) {
-      throw new NotFoundException('缺陷不存在');
+      throw new ConflictException('缺陷已被其他人修改，请刷新后重试');
     }
     return this.getDetail(rows[0].id);
   }
 
   async delete(id: string): Promise<void> {
+    const defect = await this.getDetail(id);
     const result = await this.db
       .delete(defectItem)
-      .where(
-        isValidUuid(id)
-          ? or(eq(defectItem.id, id), eq(defectItem.baseRecordId, id))
-          : eq(defectItem.baseRecordId, id),
-      )
+      .where(eq(defectItem.id, defect.id))
       .returning({ id: defectItem.id });
     if (result.length === 0) {
       throw new NotFoundException('缺陷不存在');
@@ -236,6 +253,7 @@ export class DefectService {
     return {
       id: d.id,
       baseRecordId: d.baseRecordId || '',
+      updatedAt: d.updatedAt.toISOString(),
       defectName: d.defectName || '',
       status: d.status || '',
       severity: d.severity || '',

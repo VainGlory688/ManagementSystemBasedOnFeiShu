@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Calendar, Tag, Users, Layers, AlertTriangle } from 'lucide-react';
 import { logger } from '@lark-apaas/client-toolkit/logger';
@@ -18,6 +18,9 @@ import type { TestPlan, UpdateTestPlanDto } from '@shared/api.interface';
 import { TestStatusProgress } from '../test-plan-list/TestStatusProgress';
 import { ExecutorAvatarStack } from '../test-plan-list/ExecutorAvatarStack';
 import { PriorityBadge } from '../test-plan-list/PriorityBadge';
+import { toast } from 'sonner';
+
+const toDateInputValue = (value?: string) => value ? value.slice(0, 10) : '';
 
 const TestPlanDetailPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -28,6 +31,7 @@ const TestPlanDetailPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [versionOptions, setVersionOptions] = useState<Array<{ value: string; label: string }>>([]);
   const { options } = useFieldOptions();
+  const saveQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     getVersionList({ pageSize: 200 })
@@ -77,8 +81,19 @@ const TestPlanDetailPage = () => {
   }
 
   const saveField = async <K extends keyof TestPlan>(field: K, value: TestPlan[K]) => {
-    const updated = await updateTestPlan(data.id, { [field]: value } as UpdateTestPlanDto);
-    setData(updated);
+    const testPlanId = data.id;
+    const save = saveQueueRef.current.catch(() => undefined).then(async () => {
+      try {
+        const updated = await updateTestPlan(testPlanId, { [field]: value } as unknown as UpdateTestPlanDto);
+        setData(updated);
+      } catch (err) {
+        logger.error('更新测试计划字段失败', err);
+        toast.error('保存测试计划字段失败，请稍后重试');
+        throw err;
+      }
+    });
+    saveQueueRef.current = save;
+    return save;
   };
 
   return (
@@ -199,12 +214,12 @@ const TestPlanDetailPage = () => {
             <InlineEditableField
               value={data.expectedStartDate}
               onSave={(value) => saveField('expectedStartDate', value)}
-              renderEditor={(value, onChange) => <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} />}
+              renderEditor={(value, onChange) => <Input type="date" value={toDateInputValue(value)} onChange={(event) => onChange(event.target.value)} />}
             ><InfoRow label="预计开始" value={data.expectedStartDate || '-'} mono /></InlineEditableField>
             <InlineEditableField
               value={data.expectedEndDate}
               onSave={(value) => saveField('expectedEndDate', value)}
-              renderEditor={(value, onChange) => <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} />}
+              renderEditor={(value, onChange) => <Input type="date" value={toDateInputValue(value)} onChange={(event) => onChange(event.target.value)} />}
             ><InfoRow label="预计结束" value={data.expectedEndDate || '-'} mono /></InlineEditableField>
           </div>
         </div>

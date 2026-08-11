@@ -1,4 +1,10 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { and, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import { subRequirementItem, versionRequirement } from '@server/database/schema';
@@ -17,6 +23,8 @@ interface ListQuery {
   appStatus?: string;
   appPriority?: string;
 }
+
+type DatabaseExecutor = Pick<PostgresJsDatabase, 'select' | 'execute'>;
 
 function extractParentRecordIds(value: unknown): string[] {
   if (!value) return [];
@@ -152,7 +160,14 @@ export class SubRequirementService {
   }
 
   async create(dto: CreateSubRequirementDto, userId: string): Promise<SubRequirementItem> {
-    const result = await this.db.execute(
+    if (!dto.appSubRequirementName?.trim()) {
+      throw new BadRequestException('子需求名称不能为空');
+    }
+    const parent = dto.appParentWorkItem
+      ? await this.findParentRequirement(dto.appParentWorkItem)
+      : undefined;
+    const rows = await this.db.transaction(async (tx) => {
+      const result = await tx.execute(
       sql`INSERT INTO sub_requirement_item (
         app_sub_requirement_name, app_status, app_current_owner,
         app_expected_start_date, app_expected_end_date,
@@ -164,24 +179,35 @@ export class SubRequirementService {
         ${dto.appExpectedStartDate || null}::date,
         ${dto.appExpectedEndDate || null}::date,
         ${dto.appPriority || null},
-        ${dto.appParentWorkItem ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(${dto.appParentWorkItem}::text))` : null},
+        ${parent ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(${parent.baseRecordId || parent.id}::text))` : sql`jsonb_build_object('link_record_ids', '[]'::jsonb)`},
         ${dto.appDetails || null},
         ${userId ? sql`ROW(${userId})::user_profile` : null},
         ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
-    );
-    const rows = result as unknown as { id: string }[];
-    if (dto.appParentWorkItem) {
-      await this.addToParentRequirement(
-        dto.appParentWorkItem,
-        rows[0].id,
-        userId,
       );
-    }
+      const createdRows = result as unknown as { id: string }[];
+      if (parent) {
+        await this.addToParentRequirement(
+          parent.id,
+          createdRows[0].id,
+          userId,
+          tx,
+        );
+      }
+      return createdRows;
+    });
     return this.getDetail(rows[0].id);
   }
 
   async update(id: string, dto: UpdateSubRequirementDto, userId: string): Promise<SubRequirementItem> {
+    const existing = await this.findSubRequirement(id);
+    if (dto.appSubRequirementName !== undefined && !dto.appSubRequirementName.trim()) {
+      throw new BadRequestException('子需求名称不能为空');
+    }
+    const currentParentIds = extractParentRecordIds(existing.appParentWorkItem);
+    const nextParent = dto.appParentWorkItem === undefined || !dto.appParentWorkItem
+      ? undefined
+      : await this.findParentRequirement(dto.appParentWorkItem);
     const setParts: any[] = [];
     if (dto.appSubRequirementName !== undefined) setParts.push(sql`app_sub_requirement_name = ${dto.appSubRequirementName}`);
     if (dto.appStatus !== undefined) setParts.push(sql`app_status = ${dto.appStatus || null}`);
@@ -189,76 +215,93 @@ export class SubRequirementService {
     if (dto.appExpectedStartDate !== undefined) setParts.push(sql`app_expected_start_date = ${dto.appExpectedStartDate || null}::date`);
     if (dto.appExpectedEndDate !== undefined) setParts.push(sql`app_expected_end_date = ${dto.appExpectedEndDate || null}::date`);
     if (dto.appPriority !== undefined) setParts.push(sql`app_priority = ${dto.appPriority || null}`);
-    if (dto.appParentWorkItem !== undefined) setParts.push(sql`app_parent_work_item = ${dto.appParentWorkItem ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(${dto.appParentWorkItem}::text))` : null}`);
+    if (dto.appParentWorkItem !== undefined) {
+      setParts.push(sql`app_parent_work_item = ${
+        nextParent
+          ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(${nextParent.baseRecordId || nextParent.id}::text))`
+          : sql`jsonb_build_object('link_record_ids', '[]'::jsonb)`
+      }`);
+    }
     if (dto.appDetails !== undefined) setParts.push(sql`app_details = ${dto.appDetails || null}`);
 
     if (setParts.length === 0) {
-      return this.getDetail(id);
+      return this.getDetail(existing.id);
     }
     setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
+    setParts.push(sql`_updated_at = now()`);
 
-    const result = await this.db.execute(
-      sql`UPDATE sub_requirement_item SET ${sql.join(setParts, sql`, `)} WHERE ${
-        isValidUuid(id)
-          ? sql`id = ${id} OR base_record_id = ${id}`
-          : sql`base_record_id = ${id}`
-      } RETURNING id`
-    );
-    const rows = result as unknown as { id: string }[];
-    if (rows.length === 0) {
-      throw new NotFoundException('子需求不存在');
-    }
-    return this.getDetail(rows[0].id);
+    await this.db.transaction(async (tx) => {
+      const subRequirementRecordId = existing.baseRecordId || existing.id;
+      if (dto.appParentWorkItem !== undefined && nextParent) {
+        await this.addToParentRequirement(
+          nextParent.id,
+          subRequirementRecordId,
+          userId,
+          tx,
+        );
+      }
+      const result = await tx.execute(
+        sql`UPDATE sub_requirement_item SET ${sql.join(setParts, sql`, `)}
+          WHERE id = ${existing.id}
+            AND (
+              ${dto.expectedUpdatedAt || null}::timestamptz IS NULL
+              OR date_trunc('milliseconds', _updated_at)
+                = date_trunc('milliseconds', ${dto.expectedUpdatedAt || null}::timestamptz)
+            )
+          RETURNING id`,
+      );
+      if ((result as unknown as { id: string }[]).length === 0) {
+        throw new ConflictException('子需求已被其他人修改，请刷新后重试');
+      }
+      if (dto.appParentWorkItem !== undefined) {
+        for (const parentId of currentParentIds) {
+          const parent = await this.findParentRequirement(parentId, tx, false);
+          if (parent && parent.id !== nextParent?.id) {
+            await this.removeFromParentRequirement(
+              parent.id,
+              existing.id,
+              subRequirementRecordId,
+              userId,
+              tx,
+            );
+          }
+        }
+      }
+    });
+    return this.getDetail(existing.id);
   }
 
   async delete(id: string, userId: string): Promise<void> {
-    const items = await this.db
-      .select({
-        id: subRequirementItem.id,
-        baseRecordId: subRequirementItem.baseRecordId,
-        appParentWorkItem: subRequirementItem.appParentWorkItem,
-      })
-      .from(subRequirementItem)
-      .where(
-        isValidUuid(id)
-          ? or(eq(subRequirementItem.id, id), eq(subRequirementItem.baseRecordId, id))
-          : eq(subRequirementItem.baseRecordId, id),
-      )
-      .limit(1);
-    const item = items[0];
-    if (!item) {
-      throw new NotFoundException('子需求不存在');
-    }
-
-    const result = await this.db
-      .delete(subRequirementItem)
-      .where(
-        isValidUuid(id)
-          ? or(eq(subRequirementItem.id, id), eq(subRequirementItem.baseRecordId, id))
-          : eq(subRequirementItem.baseRecordId, id),
-      )
-      .returning({ id: subRequirementItem.id });
-    if (result.length === 0) {
-      throw new NotFoundException('子需求不存在');
-    }
-
-    const parentIds = extractParentRecordIds(item.appParentWorkItem);
-    await Promise.all(
-      parentIds.map((parentId) =>
-        this.removeFromParentRequirement(
-          parentId,
-          item.id,
-          item.baseRecordId || item.id,
-          userId,
-        ),
-      ),
-    );
+    const item = await this.findSubRequirement(id);
+    const subRequirementRecordId = item.baseRecordId || item.id;
+    await this.db.transaction(async (tx) => {
+      for (const parentId of extractParentRecordIds(item.appParentWorkItem)) {
+        const parent = await this.findParentRequirement(parentId, tx, false);
+        if (parent) {
+          await this.removeFromParentRequirement(
+            parent.id,
+            item.id,
+            subRequirementRecordId,
+            userId,
+            tx,
+          );
+        }
+      }
+      const result = await tx
+        .delete(subRequirementItem)
+        .where(eq(subRequirementItem.id, item.id))
+        .returning({ id: subRequirementItem.id });
+      if (result.length === 0) {
+        throw new NotFoundException('子需求不存在');
+      }
+    });
   }
 
   private mapSubRequirement(s: typeof subRequirementItem.$inferSelect): SubRequirementItem {
     return {
       id: s.id,
       baseRecordId: s.baseRecordId || '',
+      updatedAt: s.updatedAt.toISOString(),
       appSubRequirementName: s.appSubRequirementName || '',
       appStatus: s.appStatus || '',
       appCurrentOwner: s.appCurrentOwner || '',
@@ -271,12 +314,55 @@ export class SubRequirementService {
     };
   }
 
-  private async addToParentRequirement(
+  private async findSubRequirement(id: string) {
+    const items = await this.db
+      .select()
+      .from(subRequirementItem)
+      .where(
+        isValidUuid(id)
+          ? or(eq(subRequirementItem.id, id), eq(subRequirementItem.baseRecordId, id))
+          : eq(subRequirementItem.baseRecordId, id),
+      )
+      .limit(1);
+    if (!items[0]) {
+      throw new NotFoundException('子需求不存在');
+    }
+    return items[0];
+  }
+
+  private async findParentRequirement(
     parentId: string,
+    db: DatabaseExecutor = this.db,
+    required = true,
+  ) {
+    const parents = await db
+      .select({
+        id: versionRequirement.id,
+        baseRecordId: versionRequirement.baseRecordId,
+      })
+      .from(versionRequirement)
+      .where(
+        isValidUuid(parentId)
+          ? or(
+              eq(versionRequirement.id, parentId),
+              eq(versionRequirement.baseRecordId, parentId),
+            )
+          : eq(versionRequirement.baseRecordId, parentId),
+      )
+      .limit(1);
+    if (!parents[0] && required) {
+      throw new NotFoundException('父需求不存在');
+    }
+    return parents[0];
+  }
+
+  private async addToParentRequirement(
+    parentRequirementId: string,
     subRequirementId: string,
     userId: string,
+    db: DatabaseExecutor = this.db,
   ): Promise<void> {
-    const result = await this.db.execute(
+    const result = await db.execute(
       sql`UPDATE version_requirement
         SET sub_requirement_item = jsonb_set(
               COALESCE(sub_requirement_item, '{}'::jsonb),
@@ -298,12 +384,9 @@ export class SubRequirementService {
                   || jsonb_build_array(${subRequirementId}::text)
               END
             ),
-            _updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}
-        WHERE ${
-          isValidUuid(parentId)
-            ? sql`id = ${parentId} OR base_record_id = ${parentId}`
-            : sql`base_record_id = ${parentId}`
-        }
+            _updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null},
+            _updated_at = now()
+        WHERE id = ${parentRequirementId}
         RETURNING id`,
     );
     if ((result as unknown as { id: string }[]).length === 0) {
@@ -312,12 +395,13 @@ export class SubRequirementService {
   }
 
   private async removeFromParentRequirement(
-    parentId: string,
+    parentRequirementId: string,
     subRequirementId: string,
     subRequirementRecordId: string,
     userId: string,
+    db: DatabaseExecutor = this.db,
   ): Promise<void> {
-    await this.db.execute(
+    await db.execute(
       sql`UPDATE version_requirement
         SET sub_requirement_item = jsonb_set(
               jsonb_set(
@@ -335,7 +419,7 @@ export class SubRequirementService {
                     WHERE linked_id <> ${subRequirementId}
                       AND linked_id <> ${subRequirementRecordId}
                   ),
-                  'null'::jsonb
+                  '[]'::jsonb
                 )
               ),
               '{edges}',
@@ -356,12 +440,9 @@ export class SubRequirementService {
                 '[]'::jsonb
               )
             ),
-            _updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}
-        WHERE ${
-          isValidUuid(parentId)
-            ? sql`id = ${parentId} OR base_record_id = ${parentId}`
-            : sql`base_record_id = ${parentId}`
-        }`,
+            _updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null},
+            _updated_at = now()
+        WHERE id = ${parentRequirementId}`,
     );
   }
 }

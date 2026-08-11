@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ChevronRight,
@@ -36,6 +36,7 @@ import { getDefectDetail, updateDefect } from '@/api/defect';
 import type { DefectItem, UpdateDefectDto } from '@shared/api.interface';
 import { UniversalLink } from '@lark-apaas/client-toolkit/components/UniversalLink';
 import { PillBadge } from '../defect-list/badge-helpers';
+import { toast } from 'sonner';
 
 // ---------- Info row ----------
 
@@ -109,6 +110,7 @@ const DefectDetailPage = () => {
   const [defect, setDefect] = useState<DefectItem | null>(null);
   const [loading, setLoading] = useState(true);
   const { options } = useFieldOptions();
+  const saveQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     if (!id) return;
@@ -152,8 +154,19 @@ const DefectDetailPage = () => {
     ? new Date(defect.createdAt).toLocaleString('zh-CN')
     : '-';
   const saveField = async <K extends keyof DefectItem>(field: K, value: DefectItem[K]) => {
-    const updated = await updateDefect(defect.id, { [field]: value } as UpdateDefectDto);
-    setDefect(updated);
+    const defectId = defect.id;
+    const save = saveQueueRef.current.catch(() => undefined).then(async () => {
+      try {
+        const updated = await updateDefect(defectId, { [field]: value } as unknown as UpdateDefectDto);
+        setDefect(updated);
+      } catch (err) {
+        logger.error('更新缺陷字段失败', err);
+        toast.error('保存缺陷字段失败，请稍后重试');
+        throw err;
+      }
+    });
+    saveQueueRef.current = save;
+    return save;
   };
 
   return (

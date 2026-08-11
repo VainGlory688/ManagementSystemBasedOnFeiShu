@@ -1,4 +1,10 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { and, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import {
@@ -187,6 +193,7 @@ export class RequirementService {
         return {
           id: r.id,
           baseRecordId: r.baseRecordId || '',
+          updatedAt: r.updatedAt.toISOString(),
           appReqName: r.appReqName || '',
           currentOwner: r.currentOwner || '',
           currentStatus: statusMap.get(r.id) || '待拆分',
@@ -239,6 +246,7 @@ export class RequirementService {
     return {
       id: r.id,
       baseRecordId: r.baseRecordId || '',
+      updatedAt: r.updatedAt.toISOString(),
       appReqName: r.appReqName || '',
       currentOwner: r.currentOwner || '',
       currentStatus: statusMap.get(r.id) || '待拆分',
@@ -267,14 +275,24 @@ export class RequirementService {
     }
 
     const requirement = await this.getDetail(id);
-    const parentRecordId = requirement.baseRecordId || requirement.id;
+    const parentRecordIds = [requirement.id, requirement.baseRecordId].filter(
+      (value): value is string => Boolean(value),
+    );
     const items = await this.db
       .select({
         id: subRequirementItem.id,
         baseRecordId: subRequirementItem.baseRecordId,
       })
       .from(subRequirementItem)
-      .where(sql`${subRequirementItem.appParentWorkItem}::text LIKE '%' || ${parentRecordId} || '%'`);
+      .where(
+        or(
+          ...parentRecordIds.map(
+            (parentRecordId) =>
+              sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
+                @> jsonb_build_array(${parentRecordId}::text)`,
+          ),
+        ),
+      );
 
     const stableIds = new Map<string, string>();
     for (const item of items) {
@@ -311,25 +329,34 @@ export class RequirementService {
     }
 
     const config = { edges };
-    const storedConfig = {
-      link_record_ids: items.map((item) => item.baseRecordId || item.id),
-      ...config,
-    };
     const result = await this.db.execute(
       sql`UPDATE version_requirement
-        SET sub_requirement_item = CAST(${JSON.stringify(storedConfig)} AS jsonb),
-            _updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}
-        WHERE ${isValidUuid(id) ? sql`id = ${id} OR base_record_id = ${id}` : sql`base_record_id = ${id}`}
+        SET sub_requirement_item = jsonb_set(
+              COALESCE(sub_requirement_item, '{}'::jsonb),
+              '{edges}',
+              CAST(${JSON.stringify(edges)} AS jsonb)
+            ),
+            _updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null},
+            _updated_at = now()
+        WHERE id = ${requirement.id}
+          AND (
+            ${dto.expectedUpdatedAt || null}::timestamptz IS NULL
+            OR date_trunc('milliseconds', _updated_at)
+              = date_trunc('milliseconds', ${dto.expectedUpdatedAt || null}::timestamptz)
+          )
         RETURNING id`,
     );
     if ((result as unknown as { id: string }[]).length === 0) {
-      throw new NotFoundException('需求不存在');
+      throw new ConflictException('需求已被其他人修改，请刷新后重试');
     }
 
     return config;
   }
 
   async create(dto: CreateRequirementDto, userId: string): Promise<VersionRequirement> {
+    if (!dto.appReqName?.trim()) {
+      throw new BadRequestException('需求名称不能为空');
+    }
     const planningVersion = await this.resolvePlanningVersion(dto.planningVersion, userId);
     const result = await this.db.execute(
       sql`INSERT INTO version_requirement (
@@ -356,6 +383,10 @@ export class RequirementService {
   }
 
   async update(id: string, dto: UpdateRequirementDto, userId: string): Promise<VersionRequirement> {
+    const requirement = await this.getDetail(id);
+    if (dto.appReqName !== undefined && !dto.appReqName.trim()) {
+      throw new BadRequestException('需求名称不能为空');
+    }
     const setParts: any[] = [];
     const planningVersion =
       dto.planningVersion !== undefined
@@ -375,29 +406,49 @@ export class RequirementService {
       return this.getDetail(id);
     }
     setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
+    setParts.push(sql`_updated_at = now()`);
 
     const result = await this.db.execute(
-      sql`UPDATE version_requirement SET ${sql.join(setParts, sql`, `)} WHERE ${
-        isValidUuid(id)
-          ? sql`id = ${id} OR base_record_id = ${id}`
-          : sql`base_record_id = ${id}`
-      } RETURNING id`
+      sql`UPDATE version_requirement SET ${sql.join(setParts, sql`, `)}
+        WHERE id = ${requirement.id}
+          AND (
+            ${dto.expectedUpdatedAt || null}::timestamptz IS NULL
+            OR date_trunc('milliseconds', _updated_at)
+              = date_trunc('milliseconds', ${dto.expectedUpdatedAt || null}::timestamptz)
+          )
+        RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
     if (rows.length === 0) {
-      throw new NotFoundException('需求不存在');
+      throw new ConflictException('需求已被其他人修改，请刷新后重试');
     }
     return this.getDetail(rows[0].id);
   }
 
   async delete(id: string): Promise<void> {
+    const requirement = await this.getDetail(id);
+    const parentRecordIds = [requirement.id, requirement.baseRecordId].filter(
+      (value): value is string => Boolean(value),
+    );
+    const subRequirement = await this.db
+      .select({ id: subRequirementItem.id })
+      .from(subRequirementItem)
+      .where(
+        or(
+          ...parentRecordIds.map(
+            (parentRecordId) =>
+              sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
+                @> jsonb_build_array(${parentRecordId}::text)`,
+          ),
+        ),
+      )
+      .limit(1);
+    if (subRequirement.length > 0) {
+      throw new ConflictException('需求下仍存在子需求，无法删除');
+    }
     const result = await this.db
       .delete(versionRequirement)
-      .where(
-        isValidUuid(id)
-          ? or(eq(versionRequirement.id, id), eq(versionRequirement.baseRecordId, id))
-          : eq(versionRequirement.baseRecordId, id),
-      )
+      .where(eq(versionRequirement.id, requirement.id))
       .returning({ id: versionRequirement.id });
     if (result.length === 0) {
       throw new NotFoundException('需求不存在');
@@ -439,6 +490,7 @@ export class RequirementService {
       .set({
         baseRecordId: version.id,
         updatedBy: userId || null,
+        updatedAt: new Date(),
       })
       .where(eq(mainVersionManage.id, version.id));
 
@@ -466,12 +518,10 @@ export class RequirementService {
           })
           .from(subRequirementItem)
           .where(
-            or(
-              ...parentIds.map(
-                (parentId) =>
-                  sql`${subRequirementItem.appParentWorkItem}::text LIKE '%' || ${parentId} || '%'`,
-              ),
-            ),
+            or(...parentIds.map((parentId) =>
+              sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
+                @> jsonb_build_array(${parentId}::text)`,
+            )),
           );
     const itemsByParent = new Map<string, typeof items>();
     for (const item of items) {
@@ -498,6 +548,7 @@ export class RequirementService {
     return {
       id: r.id,
       baseRecordId: r.baseRecordId || '',
+      updatedAt: r.updatedAt.toISOString(),
       appReqName: r.appReqName || '',
       currentOwner: r.currentOwner || '',
       currentStatus: '待拆分',
@@ -518,11 +569,13 @@ export class RequirementService {
 
   async getSubItems(requirementId: string, page: number, pageSize: number): Promise<SubRequirementListResponse> {
     const req = await this.getDetail(requirementId);
-    // New records created outside Bitable have no baseRecordId until synchronization.
-    // Use the local UUID in that case; never query with an empty identifier, which
-    // would turn the LIKE pattern into '%%' and return every sub-requirement.
-    const parentRecordId = req.baseRecordId || req.id;
-    const where = sql`${subRequirementItem.appParentWorkItem}::text LIKE '%' || ${parentRecordId} || '%'`;
+    const parentRecordIds = [req.id, req.baseRecordId].filter(
+      (value): value is string => Boolean(value),
+    );
+    const where = or(...parentRecordIds.map((parentRecordId) =>
+      sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
+        @> jsonb_build_array(${parentRecordId}::text)`,
+    ));
 
     const [itemsRes, totalRes] = await Promise.all([
       this.db
@@ -561,6 +614,7 @@ export class RequirementService {
         return {
           id: s.id,
           baseRecordId: s.baseRecordId || '',
+          updatedAt: s.updatedAt.toISOString(),
           appSubRequirementName: s.appSubRequirementName || '',
           appStatus: s.appStatus || '',
           appCurrentOwner: s.appCurrentOwner || '',

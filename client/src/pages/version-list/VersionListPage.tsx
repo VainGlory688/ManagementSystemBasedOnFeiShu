@@ -32,8 +32,15 @@ import {
 } from '@/components/ui/pagination';
 import { Skeleton } from '@/components/ui/skeleton';
 
-import { getVersionList, createVersion, updateVersion, deleteVersion } from '@/api/version';
-import type { MainVersion } from '@shared/api.interface';
+import {
+  getVersionList,
+  createVersion,
+  updateVersion,
+  deleteVersion,
+  getVersionRequirements,
+  getVersionSummary,
+} from '@/api/version';
+import type { MainVersion, UpdateVersionDto } from '@shared/api.interface';
 import {
   getPriorityInfo,
   getStatusInfo,
@@ -61,6 +68,8 @@ interface FilterTags {
   versionType?: string;
   priority?: string;
 }
+
+const toDateInputValue = (value?: string) => value ? value.slice(0, 10) : '';
 
 const VersionListPage = () => {
   const navigate = useNavigate();
@@ -90,6 +99,7 @@ const VersionListPage = () => {
   const [editingItem, setEditingItem] = useState<MainVersion | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletingItem, setDeletingItem] = useState<MainVersion | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const versionSchema = z.object({
     versionName: z.string().min(1, '版本名称不能为空'),
@@ -144,30 +154,53 @@ const VersionListPage = () => {
 
   const handleEdit = async (data: VersionFormData) => {
     if (!editingItem) return;
+    const payload = Object.fromEntries(
+      Object.entries(data).filter(([key, value]) => {
+        const previousValue = editingItem[key as keyof VersionFormData];
+        return JSON.stringify(value) !== JSON.stringify(previousValue);
+      }),
+    ) as unknown as UpdateVersionDto;
+    if (Object.keys(payload).length === 0) {
+      toast.info('未检测到修改');
+      return;
+    }
     try {
-      await updateVersion(editingItem.id, data);
+      await updateVersion(editingItem.id, payload);
       toast.success('版本更新成功');
       setDialogOpen(false);
       setEditingItem(null);
       form.reset();
       fetchList();
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || '更新失败';
+      const data = (err as { response?: { data?: { error?: { message?: string }; message?: string } } })?.response?.data;
+      const msg = data?.error?.message || data?.message || '更新失败';
       toast.error(msg);
     }
   };
 
   const handleDelete = async () => {
-    if (!deletingItem) return;
+    if (!deletingItem || isDeleting) return;
+    setIsDeleting(true);
     try {
+      const [requirements, summary] = await Promise.all([
+        getVersionRequirements(deletingItem.id, 1, 1),
+        getVersionSummary(deletingItem.id),
+      ]);
+      if (requirements.total > 0 || summary.testPlanCount > 0) {
+        toast.error('版本仍有关联需求或测试计划，无法删除');
+        return;
+      }
       await deleteVersion(deletingItem.id);
       toast.success('版本已删除');
       setDeleteConfirmOpen(false);
       setDeletingItem(null);
       fetchList();
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || '删除失败';
+      const data = (err as { response?: { data?: { error?: { message?: string }; message?: string } } })?.response?.data;
+      const msg = data?.error?.message || data?.message || '删除失败';
       toast.error(msg);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -197,12 +230,12 @@ const VersionListPage = () => {
       appStatus: item.appStatus || '',
       priority: item.priority || '',
       versionType: item.versionType || '',
-      versionStartDate: item.versionStartDate || '',
-      packTime: item.packTime || '',
-      expectedTestTime: item.expectedTestTime || '',
-      versionCloseDate: item.versionCloseDate || '',
-      actualGrayDate: item.actualGrayDate || '',
-      actualReleaseDate: item.actualReleaseDate || '',
+      versionStartDate: toDateInputValue(item.versionStartDate),
+      packTime: toDateInputValue(item.packTime),
+      expectedTestTime: toDateInputValue(item.expectedTestTime),
+      versionCloseDate: toDateInputValue(item.versionCloseDate),
+      actualGrayDate: toDateInputValue(item.actualGrayDate),
+      actualReleaseDate: toDateInputValue(item.actualReleaseDate),
       versionDoc: item.versionDoc || '',
       versionRisk: item.versionRisk || '',
     });
@@ -757,7 +790,9 @@ const VersionListPage = () => {
                 <Button type="button" variant="outline" onClick={() => { setDialogOpen(false); setEditingItem(null); form.reset(); }}>
                   取消
                 </Button>
-                <Button type="submit">{editingItem ? '保存' : '创建'}</Button>
+                <Button type="submit" disabled={form.formState.isSubmitting}>
+                  {form.formState.isSubmitting ? '提交中…' : editingItem ? '保存' : '创建'}
+                </Button>
               </div>
             </form>
           </Form>
@@ -777,8 +812,8 @@ const VersionListPage = () => {
             <Button variant="outline" onClick={() => { setDeleteConfirmOpen(false); setDeletingItem(null); }}>
               取消
             </Button>
-            <Button variant="default" onClick={handleDelete}>
-              确认删除
+            <Button variant="default" onClick={handleDelete} disabled={isDeleting}>
+              {isDeleting ? '删除中…' : '确认删除'}
             </Button>
           </div>
         </DialogContent>

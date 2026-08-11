@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Check, Pencil, X } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 
@@ -36,6 +37,8 @@ export function InlineEditableField<T>({
     try {
       await onSave(draft);
       setEditing(false);
+    } catch {
+      toast.error('保存失败，请稍后重试');
     } finally {
       setSaving(false);
     }

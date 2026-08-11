@@ -114,7 +114,6 @@ export async function deleteVersion(id: string): Promise<void> {
       method: 'DELETE',
     });
   } catch (error) {
-    logger.error('删除版本失败', error);
     throw error;
   }
 }

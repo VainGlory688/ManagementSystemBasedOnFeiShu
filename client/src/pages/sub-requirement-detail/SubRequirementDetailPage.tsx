@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ChevronRight, FileText, Loader2 } from 'lucide-react';
 import { logger } from '@lark-apaas/client-toolkit/logger';
@@ -15,6 +15,7 @@ import { DirectSelectField } from '@/components/DirectSelectField';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 import { cn } from '@/lib/utils';
 import type { SubRequirementItem, UpdateSubRequirementDto } from '@shared/api.interface';
+import { toast } from 'sonner';
 
 function getStatusBadgeClass(status: string): string {
   if (['已完成', '已上线'].includes(status)) {
@@ -46,6 +47,10 @@ function formatDate(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('zh-CN');
 }
 
+function toDateInputValue(value?: string): string {
+  return value ? value.slice(0, 10) : '';
+}
+
 interface InfoItemProps {
   label: string;
   children: React.ReactNode;
@@ -65,6 +70,7 @@ const SubRequirementDetailPage = () => {
   const [detail, setDetail] = useState<SubRequirementItem | null>(null);
   const [loading, setLoading] = useState(true);
   const { options } = useFieldOptions();
+  const saveQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     if (!id) return;
@@ -103,11 +109,22 @@ const SubRequirementDetailPage = () => {
     field: K,
     value: SubRequirementItem[K],
   ) => {
-    const updated = await updateSubRequirement(
-      detail.id,
-      { [field]: value } as UpdateSubRequirementDto,
-    );
-    setDetail(updated);
+    const subRequirementId = detail.id;
+    const save = saveQueueRef.current.catch(() => undefined).then(async () => {
+      try {
+        const updated = await updateSubRequirement(
+          subRequirementId,
+          { [field]: value } as unknown as UpdateSubRequirementDto,
+        );
+        setDetail(updated);
+      } catch (err) {
+        logger.error('更新子需求字段失败', err);
+        toast.error('保存子需求字段失败，请稍后重试');
+        throw err;
+      }
+    });
+    saveQueueRef.current = save;
+    return save;
   };
 
   const parentLink = detail.appParentWorkItemRecordId
@@ -168,7 +185,7 @@ const SubRequirementDetailPage = () => {
               <InlineEditableField
                 value={detail.appExpectedStartDate}
                 onSave={(value) => saveField('appExpectedStartDate', value)}
-                renderEditor={(value, onChange) => <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} />}
+                renderEditor={(value, onChange) => <Input type="date" value={toDateInputValue(value)} onChange={(event) => onChange(event.target.value)} />}
               >
                 <span className="font-mono">{formatDate(detail.appExpectedStartDate)}</span>
               </InlineEditableField>
@@ -177,7 +194,7 @@ const SubRequirementDetailPage = () => {
               <InlineEditableField
                 value={detail.appExpectedEndDate}
                 onSave={(value) => saveField('appExpectedEndDate', value)}
-                renderEditor={(value, onChange) => <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} />}
+                renderEditor={(value, onChange) => <Input type="date" value={toDateInputValue(value)} onChange={(event) => onChange(event.target.value)} />}
               >
                 <span className="font-mono">{formatDate(detail.appExpectedEndDate)}</span>
               </InlineEditableField>

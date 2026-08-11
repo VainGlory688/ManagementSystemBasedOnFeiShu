@@ -42,6 +42,8 @@ const emptyValues: SubRequirementFormData = {
   appDetails: '',
 };
 
+const toDateInputValue = (value?: string) => value ? value.slice(0, 10) : '';
+
 interface SubRequirementDialogsProps {
   parentRequirementId: string;
   editorOpen: boolean;
@@ -83,8 +85,8 @@ const SubRequirementDialogs = ({
             appSubRequirementName: item.appSubRequirementName,
             appStatus: item.appStatus,
             appCurrentOwner: item.appCurrentOwner || null,
-            appExpectedStartDate: item.appExpectedStartDate,
-            appExpectedEndDate: item.appExpectedEndDate,
+            appExpectedStartDate: toDateInputValue(item.appExpectedStartDate),
+            appExpectedEndDate: toDateInputValue(item.appExpectedEndDate),
             appPriority: item.appPriority,
             appDetails: item.appDetails || '',
           });
@@ -273,7 +275,9 @@ function SubRequirementForm({
         )} />
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="outline" onClick={onCancel}>取消</Button>
-          <Button type="submit">{submitLabel}</Button>
+          <Button type="submit" disabled={form.formState.isSubmitting}>
+            {form.formState.isSubmitting ? '提交中…' : submitLabel}
+          </Button>
         </div>
       </form>
     </Form>

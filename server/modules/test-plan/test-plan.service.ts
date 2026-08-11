@@ -1,4 +1,10 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { and, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import {
@@ -28,6 +34,12 @@ interface ListQuery {
   planningVersion?: string;
   executor?: string;
   keyword?: string;
+}
+
+function requireName(value: unknown, field: string): void {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new BadRequestException(`${field}不能为空`);
+  }
 }
 
 @Injectable()
@@ -145,6 +157,7 @@ export class TestPlanService {
   }
 
   async create(dto: CreateTestPlanDto, userId: string): Promise<TestPlan> {
+    requireName(dto.planName, '测试计划名称');
     const executorProfiles = dto.executor && dto.executor.length > 0
       ? sql`ARRAY[${sql.join(dto.executor.map((id: string) => sql`ROW(${id})::user_profile`), sql`, `)}]::user_profile[]`
       : null;
@@ -161,7 +174,11 @@ export class TestPlanService {
         ${executorProfiles},
         ${dto.expectedStartDate || null}::date,
         ${dto.expectedEndDate || null}::date,
-        ${dto.relatedVersion ? sql`to_jsonb(${dto.relatedVersion}::text)` : null},
+        ${dto.relatedVersion
+          ? sql`jsonb_build_object(
+              'link_record_ids', jsonb_build_array(CAST(${dto.relatedVersion} AS text))
+            )`
+          : null},
         ${userId ? sql`ROW(${userId})::user_profile` : null},
         ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
@@ -171,6 +188,9 @@ export class TestPlanService {
   }
 
   async update(id: string, dto: UpdateTestPlanDto, userId: string): Promise<TestPlan> {
+    const plan = await this.getDetail(id);
+    if (dto.planName !== undefined) requireName(dto.planName, '测试计划名称');
+
     const setParts: any[] = [];
     if (dto.planName !== undefined) setParts.push(sql`plan_name = ${dto.planName}`);
     if (dto.testStatus !== undefined) setParts.push(sql`test_status = ${dto.testStatus || null}`);
@@ -186,35 +206,44 @@ export class TestPlanService {
     }
     if (dto.expectedStartDate !== undefined) setParts.push(sql`expected_start_date = ${dto.expectedStartDate || null}::date`);
     if (dto.expectedEndDate !== undefined) setParts.push(sql`expected_end_date = ${dto.expectedEndDate || null}::date`);
-    if (dto.relatedVersion !== undefined) setParts.push(sql`related_version = ${dto.relatedVersion ? sql`to_jsonb(${dto.relatedVersion}::text)` : null}`);
+    if (dto.relatedVersion !== undefined) {
+      setParts.push(sql`related_version = ${
+        dto.relatedVersion
+          ? sql`jsonb_build_object(
+              'link_record_ids', jsonb_build_array(CAST(${dto.relatedVersion} AS text))
+            )`
+          : null
+      }`);
+    }
 
     if (setParts.length === 0) {
-      return this.getDetail(id);
+      return plan;
     }
     setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
+    setParts.push(sql`_updated_at = NOW()`);
 
     const result = await this.db.execute(
-      sql`UPDATE test_plan SET ${sql.join(setParts, sql`, `)} WHERE ${
-        isValidUuid(id)
-          ? sql`id = ${id} OR base_record_id = ${id}`
-          : sql`base_record_id = ${id}`
-      } RETURNING id`
+      sql`UPDATE test_plan SET ${sql.join(setParts, sql`, `)}
+        WHERE id = ${plan.id}
+          AND (
+            ${dto.expectedUpdatedAt || null}::timestamptz IS NULL
+            OR date_trunc('milliseconds', _updated_at)
+              = date_trunc('milliseconds', ${dto.expectedUpdatedAt || null}::timestamptz)
+          )
+        RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
     if (rows.length === 0) {
-      throw new NotFoundException('测试计划不存在');
+      throw new ConflictException('测试计划已被其他人修改，请刷新后重试');
     }
     return this.getDetail(rows[0].id);
   }
 
   async delete(id: string): Promise<void> {
+    const plan = await this.getDetail(id);
     const result = await this.db
       .delete(testPlan)
-      .where(
-        isValidUuid(id)
-          ? or(eq(testPlan.id, id), eq(testPlan.baseRecordId, id))
-          : eq(testPlan.baseRecordId, id),
-      )
+      .where(eq(testPlan.id, plan.id))
       .returning({ id: testPlan.id });
     if (result.length === 0) {
       throw new NotFoundException('测试计划不存在');
@@ -230,7 +259,13 @@ export class TestPlanService {
         ids.push(item);
       } else if (item && typeof item === 'object') {
         const obj = item as Record<string, unknown>;
-        if (typeof obj.recordId === 'string' && obj.recordId) {
+        if (Array.isArray(obj.link_record_ids)) {
+          ids.push(
+            ...obj.link_record_ids.filter(
+              (id): id is string => typeof id === 'string' && Boolean(id),
+            ),
+          );
+        } else if (typeof obj.recordId === 'string' && obj.recordId) {
           ids.push(obj.recordId);
         } else if (typeof obj.text === 'string' && obj.text) {
           ids.push(obj.text);
@@ -246,6 +281,7 @@ export class TestPlanService {
     return {
       id: t.id,
       baseRecordId: t.baseRecordId || '',
+      updatedAt: t.updatedAt.toISOString(),
       planName: t.planName || '',
       testStatus: t.testStatus || '',
       priority: t.priority || '',

@@ -71,6 +71,7 @@ const DefectListPage = () => {
   const [editingItem, setEditingItem] = useState<DefectItem | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletingItem, setDeletingItem] = useState<DefectItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const defectSchema = z.object({
     defectName: z.string().min(1, '缺陷名称不能为空'),
@@ -138,8 +139,28 @@ const DefectListPage = () => {
 
   const handleEdit = async (data: DefectFormData) => {
     if (!editingItem) return;
+    const original: DefectFormData = {
+      defectName: editingItem.defectName,
+      status: editingItem.status || '',
+      severity: editingItem.severity || '',
+      priority: editingItem.priority || '',
+      businessLine: editingItem.businessLine || '',
+      rejectionReason: editingItem.rejectionReason || '',
+      discoveryEnvironment: editingItem.discoveryEnvironment || '',
+      testingStage: editingItem.testingStage || '',
+      currentOwner: editingItem.currentOwner || [],
+      detail: editingItem.detail || '',
+      appParentOrder: editingItem.appParentOrderRecordId || '',
+    };
+    const payload = Object.fromEntries(
+      Object.entries(data).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(original[key as keyof DefectFormData])),
+    ) as unknown as UpdateDefectDto;
+    if (Object.keys(payload).length === 0) {
+      toast.info('未检测到修改');
+      return;
+    }
     try {
-      await updateDefect(editingItem.id, data as UpdateDefectDto);
+      await updateDefect(editingItem.id, payload);
       toast.success('缺陷更新成功');
       setDialogOpen(false);
       setEditingItem(null);
@@ -152,7 +173,8 @@ const DefectListPage = () => {
   };
 
   const handleDelete = async () => {
-    if (!deletingItem) return;
+    if (!deletingItem || isDeleting) return;
+    setIsDeleting(true);
     try {
       await deleteDefect(deletingItem.id);
       toast.success('缺陷已删除');
@@ -162,6 +184,8 @@ const DefectListPage = () => {
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || '删除失败';
       toast.error(msg);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -769,7 +793,9 @@ const DefectListPage = () => {
                 <Button type="button" variant="outline" onClick={() => { setDialogOpen(false); setEditingItem(null); form.reset(); }}>
                   取消
                 </Button>
-                <Button type="submit">{editingItem ? '保存' : '创建'}</Button>
+                <Button type="submit" disabled={form.formState.isSubmitting}>
+                  {form.formState.isSubmitting ? '提交中…' : editingItem ? '保存' : '创建'}
+                </Button>
               </div>
             </form>
           </Form>
@@ -789,8 +815,8 @@ const DefectListPage = () => {
             <Button variant="outline" onClick={() => { setDeleteConfirmOpen(false); setDeletingItem(null); }}>
               取消
             </Button>
-            <Button variant="default" onClick={handleDelete}>
-              确认删除
+            <Button variant="default" onClick={handleDelete} disabled={isDeleting}>
+              {isDeleting ? '删除中…' : '确认删除'}
             </Button>
           </div>
         </DialogContent>

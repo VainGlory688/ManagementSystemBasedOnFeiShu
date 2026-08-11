@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ChevronRight, Loader2, FileText, Plus } from 'lucide-react';
 import { logger } from '@lark-apaas/client-toolkit/logger';
@@ -27,6 +27,7 @@ import {
 } from '@/api/requirement';
 import { getVersionList } from '@/api/version';
 import type { VersionRequirement, SubRequirementItem, UpdateRequirementDto } from '@shared/api.interface';
+import { toast } from 'sonner';
 
 const getPriorityBadgeClass = (priority: string): string => {
   switch (priority) {
@@ -42,6 +43,8 @@ const getPriorityBadgeClass = (priority: string): string => {
       return 'bg-muted text-muted-foreground border-transparent';
   }
 };
+
+const toDateInputValue = (value?: string) => value ? value.slice(0, 10) : '';
 
 interface InfoItemProps {
   label: string;
@@ -71,6 +74,7 @@ const RequirementDetailPage = () => {
   const [deletingSubItem, setDeletingSubItem] = useState<SubRequirementItem | null>(null);
   const [versionOptions, setVersionOptions] = useState<Array<{ value: string; label: string }>>([]);
   const { options } = useFieldOptions();
+  const saveQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     getVersionList({ pageSize: 200 })
@@ -142,11 +146,22 @@ const RequirementDetailPage = () => {
     field: K,
     value: VersionRequirement[K],
   ) => {
-    const updated = await updateRequirement(
-      detail.id,
-      { [field]: value } as UpdateRequirementDto,
-    );
-    setDetail(updated);
+    const requirementId = detail.id;
+    const save = saveQueueRef.current.catch(() => undefined).then(async () => {
+      try {
+        const updated = await updateRequirement(
+          requirementId,
+          { [field]: value } as unknown as UpdateRequirementDto,
+        );
+        setDetail(updated);
+      } catch (err) {
+        logger.error('更新需求字段失败', err);
+        toast.error('保存需求字段失败，请稍后重试');
+        throw err;
+      }
+    });
+    saveQueueRef.current = save;
+    return save;
   };
 
   return (
@@ -241,7 +256,7 @@ const RequirementDetailPage = () => {
               <InlineEditableField
                 value={detail.estimatedCompletionTime}
                 onSave={(value) => saveField('estimatedCompletionTime', value)}
-                renderEditor={(value, onChange) => <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} />}
+                renderEditor={(value, onChange) => <Input type="date" value={toDateInputValue(value)} onChange={(event) => onChange(event.target.value)} />}
               >
                 <span className="font-mono">{formatDate(detail.estimatedCompletionTime)}</span>
               </InlineEditableField>

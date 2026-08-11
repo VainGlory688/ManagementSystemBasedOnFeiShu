@@ -1,6 +1,12 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { and, count, desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import {
   mainVersionManage,
   versionRequirement,
@@ -25,6 +31,12 @@ function extractParentRecordIds(value: unknown): string[] {
   return Array.isArray(ids)
     ? ids.filter((id): id is string => typeof id === 'string')
     : [];
+}
+
+function requireName(value: unknown, field: string): void {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new BadRequestException(`${field}不能为空`);
+  }
 }
 
 function calculateRequirementStatus(
@@ -165,6 +177,7 @@ export class VersionService {
       items: itemsRes.map((r) => ({
         id: r.id,
         baseRecordId: r.baseRecordId || '',
+        updatedAt: r.updatedAt.toISOString(),
         appReqName: r.appReqName || '',
         currentOwner: r.currentOwner || '',
         currentStatus: calculateRequirementStatus(
@@ -229,6 +242,7 @@ export class VersionService {
   }
 
   async create(dto: CreateVersionDto, userId: string): Promise<MainVersion> {
+    requireName(dto.versionName, '版本名称');
     const result = await this.db.execute(
       sql`INSERT INTO main_version_manage (
         base_record_id, version_name, app_status, priority, version_type, version_doc, version_risk,
@@ -254,6 +268,9 @@ export class VersionService {
   }
 
   async update(id: string, dto: UpdateVersionDto, userId: string): Promise<MainVersion> {
+    const version = await this.getDetail(id);
+    if (dto.versionName !== undefined) requireName(dto.versionName, '版本名称');
+
     const setParts: any[] = [];
     if (dto.versionName !== undefined) setParts.push(sql`version_name = ${dto.versionName}`);
     if (dto.appStatus !== undefined) setParts.push(sql`app_status = ${dto.appStatus || null}`);
@@ -270,32 +287,59 @@ export class VersionService {
     if (dto.rollbackReasonAndProcess !== undefined) setParts.push(sql`rollback_reason_and_process = ${dto.rollbackReasonAndProcess || null}`);
 
     if (setParts.length === 0) {
-      return this.getDetail(id);
+      return version;
     }
     setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
+    setParts.push(sql`_updated_at = NOW()`);
 
     const result = await this.db.execute(
-      sql`UPDATE main_version_manage SET ${sql.join(setParts, sql`, `)} WHERE ${
-        isValidUuid(id)
-          ? sql`id = ${id} OR base_record_id = ${id}`
-          : sql`base_record_id = ${id}`
-      } RETURNING id`
+      sql`UPDATE main_version_manage SET ${sql.join(setParts, sql`, `)}
+        WHERE id = ${version.id}
+          AND (
+            ${dto.expectedUpdatedAt || null}::timestamptz IS NULL
+            OR date_trunc('milliseconds', _updated_at)
+              = date_trunc('milliseconds', ${dto.expectedUpdatedAt || null}::timestamptz)
+          )
+        RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
     if (rows.length === 0) {
-      throw new NotFoundException('版本不存在');
+      throw new ConflictException('版本已被其他人修改，请刷新后重试');
     }
     return this.getDetail(rows[0].id);
   }
 
   async delete(id: string): Promise<void> {
+    const version = await this.getDetail(id);
+    const versionRecordIds = [version.id, version.baseRecordId].filter(Boolean);
+    const [requirements, plans] = await Promise.all([
+      this.db
+        .select({ id: versionRequirement.id })
+        .from(versionRequirement)
+        .where(inArray(versionRequirement.planningVersion, versionRecordIds))
+        .limit(1),
+      this.db
+        .select({ id: testPlan.id })
+        .from(testPlan)
+        .where(
+          or(
+            ...versionRecordIds.map(
+              (recordId) =>
+                sql`${testPlan.relatedVersion} @> jsonb_build_object(
+                  'link_record_ids', jsonb_build_array(CAST(${recordId} AS text))
+                ) OR ${testPlan.relatedVersion}::text LIKE '%' || ${recordId} || '%'`,
+            ),
+          ),
+        )
+        .limit(1),
+    ]);
+    if (requirements.length > 0 || plans.length > 0) {
+      throw new ConflictException('版本仍有关联需求或测试计划，无法删除');
+    }
+
     const result = await this.db
       .delete(mainVersionManage)
-      .where(
-        isValidUuid(id)
-          ? or(eq(mainVersionManage.id, id), eq(mainVersionManage.baseRecordId, id))
-          : eq(mainVersionManage.baseRecordId, id),
-      )
+      .where(eq(mainVersionManage.id, version.id))
       .returning({ id: mainVersionManage.id });
     if (result.length === 0) {
       throw new NotFoundException('版本不存在');
@@ -306,6 +350,7 @@ export class VersionService {
     return {
       id: v.id,
       baseRecordId: v.baseRecordId || '',
+      updatedAt: v.updatedAt.toISOString(),
       versionName: v.versionName || '',
       appStatus: v.appStatus || '',
       priority: v.priority || '',

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle } from 'lucide-react';
 import { logger } from '@lark-apaas/client-toolkit/logger';
@@ -29,6 +29,7 @@ import {
 import { MilestoneTimeline } from './MilestoneTimeline';
 import { RequirementList } from './RequirementList';
 import { SummaryCards } from './SummaryCards';
+import { toast } from 'sonner';
 
 const VersionDetailPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -41,6 +42,7 @@ const VersionDetailPage = () => {
   const [reqLoading, setReqLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { options } = useFieldOptions();
+  const saveQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     if (!id) return;
@@ -84,8 +86,19 @@ const VersionDetailPage = () => {
   const highRisk = version ? isHighRisk(version) : false;
   const saveField = async <K extends keyof MainVersion>(field: K, value: MainVersion[K]) => {
     if (!version) return;
-    const updated = await updateVersion(version.id, { [field]: value } as UpdateVersionDto);
-    setVersion(updated);
+    const versionId = version.id;
+    const save = saveQueueRef.current.catch(() => undefined).then(async () => {
+      try {
+        const updated = await updateVersion(versionId, { [field]: value } as unknown as UpdateVersionDto);
+        setVersion(updated);
+      } catch (err) {
+        logger.error('更新版本字段失败', err);
+        toast.error('保存版本字段失败，请稍后重试');
+        throw err;
+      }
+    });
+    saveQueueRef.current = save;
+    return save;
   };
 
   return (

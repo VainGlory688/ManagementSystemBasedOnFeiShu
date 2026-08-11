@@ -50,6 +50,7 @@ type SortKey =
   | 'testPlanType'
   | 'businessLine';
 type SortOrder = 'asc' | 'desc' | null;
+const toDateInputValue = (value?: string) => value ? value.slice(0, 10) : '';
 
 const TestPlanListPage = () => {
   const navigate = useNavigate();
@@ -75,6 +76,7 @@ const TestPlanListPage = () => {
   const [editingItem, setEditingItem] = useState<TestPlan | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletingItem, setDeletingItem] = useState<TestPlan | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const testPlanSchema = z.object({
     planName: z.string().min(1, '计划名称不能为空'),
@@ -200,8 +202,26 @@ const TestPlanListPage = () => {
 
   const handleEdit = async (data: TestPlanFormData) => {
     if (!editingItem) return;
+    const original: TestPlanFormData = {
+      planName: editingItem.planName,
+      testStatus: editingItem.testStatus || '',
+      priority: editingItem.priority || '',
+      testPlanType: editingItem.testPlanType || '',
+      businessLine: editingItem.businessLine || '',
+      executor: editingItem.executor || [],
+      expectedStartDate: toDateInputValue(editingItem.expectedStartDate),
+      expectedEndDate: toDateInputValue(editingItem.expectedEndDate),
+      relatedVersion: editingItem.relatedVersion || '',
+    };
+    const payload = Object.fromEntries(
+      Object.entries(data).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(original[key as keyof TestPlanFormData])),
+    ) as unknown as UpdateTestPlanDto;
+    if (Object.keys(payload).length === 0) {
+      toast.info('未检测到修改');
+      return;
+    }
     try {
-      await updateTestPlan(editingItem.id, data as unknown as UpdateTestPlanDto);
+      await updateTestPlan(editingItem.id, payload);
       toast.success('测试计划更新成功');
       setDialogOpen(false);
       setEditingItem(null);
@@ -214,7 +234,8 @@ const TestPlanListPage = () => {
   };
 
   const handleDelete = async () => {
-    if (!deletingItem) return;
+    if (!deletingItem || isDeleting) return;
+    setIsDeleting(true);
     try {
       await deleteTestPlan(deletingItem.id);
       toast.success('测试计划已删除');
@@ -224,6 +245,8 @@ const TestPlanListPage = () => {
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || '删除失败';
       toast.error(msg);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -252,8 +275,8 @@ const TestPlanListPage = () => {
       testPlanType: item.testPlanType || '',
       businessLine: item.businessLine || '',
       executor: item.executor || [],
-      expectedStartDate: item.expectedStartDate || '',
-      expectedEndDate: item.expectedEndDate || '',
+      expectedStartDate: toDateInputValue(item.expectedStartDate),
+      expectedEndDate: toDateInputValue(item.expectedEndDate),
       relatedVersion: item.relatedVersion || '',
     });
     setDialogOpen(true);
@@ -659,7 +682,9 @@ const TestPlanListPage = () => {
                 <Button type="button" variant="outline" onClick={() => { setDialogOpen(false); setEditingItem(null); form.reset(); }}>
                   取消
                 </Button>
-                <Button type="submit">{editingItem ? '保存' : '创建'}</Button>
+                <Button type="submit" disabled={form.formState.isSubmitting}>
+                  {form.formState.isSubmitting ? '提交中…' : editingItem ? '保存' : '创建'}
+                </Button>
               </div>
             </form>
           </Form>
@@ -679,8 +704,8 @@ const TestPlanListPage = () => {
             <Button variant="outline" onClick={() => { setDeleteConfirmOpen(false); setDeletingItem(null); }}>
               取消
             </Button>
-            <Button variant="default" onClick={handleDelete}>
-              确认删除
+            <Button variant="default" onClick={handleDelete} disabled={isDeleting}>
+              {isDeleting ? '删除中…' : '确认删除'}
             </Button>
           </div>
         </DialogContent>

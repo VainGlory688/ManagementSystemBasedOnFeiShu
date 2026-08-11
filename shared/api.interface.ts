@@ -53,6 +53,7 @@ export interface RecentActivitiesResponse {
 export interface MainVersion {
   id: string;
   baseRecordId: string;
+  updatedAt: string;
   versionName: string;
   appStatus: string;
   priority: string;
@@ -83,6 +84,7 @@ export interface VersionSummary {
 export interface VersionRequirement {
   id: string;
   baseRecordId: string;
+  updatedAt: string;
   appReqName: string;
   currentOwner: string;
   currentStatus: RequirementCurrentStatus;
@@ -117,6 +119,7 @@ export interface RequirementPipelineConfig {
 
 export interface UpdateRequirementPipelineDto {
   edges: RequirementPipelineEdge[];
+  expectedUpdatedAt?: string;
 }
 
 export interface RequirementListResponse {
@@ -127,6 +130,7 @@ export interface RequirementListResponse {
 export interface SubRequirementItem {
   id: string;
   baseRecordId: string;
+  updatedAt: string;
   appSubRequirementName: string;
   appStatus: string;
   appCurrentOwner: string;
@@ -147,6 +151,7 @@ export interface SubRequirementListResponse {
 export interface TestPlan {
   id: string;
   baseRecordId: string;
+  updatedAt: string;
   planName: string;
   testStatus: string;
   priority: string;
@@ -167,6 +172,7 @@ export interface TestPlanListResponse {
 export interface DefectItem {
   id: string;
   baseRecordId: string;
+  updatedAt: string;
   defectName: string;
   status: string;
   severity: string;
@@ -259,7 +265,9 @@ export interface CreateVersionDto {
   rollbackReasonAndProcess?: string;
 }
 
-export interface UpdateVersionDto extends Partial<CreateVersionDto> {}
+export interface UpdateVersionDto extends Partial<CreateVersionDto> {
+  expectedUpdatedAt?: string;
+}
 
 export interface CreateRequirementDto {
   appReqName: string;
@@ -273,7 +281,9 @@ export interface CreateRequirementDto {
   description?: string;
 }
 
-export interface UpdateRequirementDto extends Partial<CreateRequirementDto> {}
+export interface UpdateRequirementDto extends Partial<CreateRequirementDto> {
+  expectedUpdatedAt?: string;
+}
 
 export interface CreateSubRequirementDto {
   appSubRequirementName: string;
@@ -286,7 +296,9 @@ export interface CreateSubRequirementDto {
   appDetails?: string;
 }
 
-export interface UpdateSubRequirementDto extends Partial<CreateSubRequirementDto> {}
+export interface UpdateSubRequirementDto extends Partial<CreateSubRequirementDto> {
+  expectedUpdatedAt?: string;
+}
 
 export interface CreateTestPlanDto {
   planName: string;
@@ -300,7 +312,9 @@ export interface CreateTestPlanDto {
   relatedVersion?: string;
 }
 
-export interface UpdateTestPlanDto extends Partial<CreateTestPlanDto> {}
+export interface UpdateTestPlanDto extends Partial<CreateTestPlanDto> {
+  expectedUpdatedAt?: string;
+}
 
 export interface CreateDefectDto {
   defectName: string;
@@ -316,4 +330,6 @@ export interface CreateDefectDto {
   appParentOrder?: string;
 }
 
-export interface UpdateDefectDto extends Partial<CreateDefectDto> {}
+export interface UpdateDefectDto extends Partial<CreateDefectDto> {
+  expectedUpdatedAt?: string;
+}
