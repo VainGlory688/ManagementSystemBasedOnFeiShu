@@ -148,6 +148,12 @@ export interface SubRequirementListResponse {
   total: number;
 }
 
+export interface ExceptionItemsResponse {
+  overdueRequirements: VersionRequirement[];
+  unscheduledOrTodoRequirements: VersionRequirement[];
+  todayDueSubRequirements: SubRequirementItem[];
+}
+
 export interface TestPlan {
   id: string;
   baseRecordId: string;

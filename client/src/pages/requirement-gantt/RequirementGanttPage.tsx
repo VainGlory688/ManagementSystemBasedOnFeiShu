@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { useFieldOptions } from '@/hooks/useFieldOptions';
 import type {
   MainVersion,
   RequirementListResponse,
@@ -58,6 +59,7 @@ const RequirementGanttPage = () => {
   const [filterRequirementType, setFilterRequirementType] = useState('all');
   const [view, setView] = useState<GanttView>('month');
   const [currentDate, setCurrentDate] = useState(() => dayjs());
+  const { options: fieldOptions } = useFieldOptions();
 
   useEffect(() => {
     let cancelled = false;
@@ -94,21 +96,8 @@ const RequirementGanttPage = () => {
     && (filterRequirementType === 'all' || requirement.reqType === filterRequirementType)
   )), [requirements, filterBusinessLine, filterRequirementType, filterVersion]);
 
-  const businessLines = useMemo(() => {
-    const lines = new Set<string>();
-    requirements.forEach((requirement) => {
-      if (requirement.businessLine) lines.add(requirement.businessLine);
-    });
-    return Array.from(lines).sort();
-  }, [requirements]);
-
-  const requirementTypes = useMemo(() => {
-    const types = new Set<string>();
-    requirements.forEach((requirement) => {
-      if (requirement.reqType) types.add(requirement.reqType);
-    });
-    return Array.from(types).sort();
-  }, [requirements]);
+  const businessLines = fieldOptions.req_business_line || [];
+  const requirementTypes = fieldOptions.req_type || [];
 
   const range = useMemo(() => getViewRange(currentDate, view), [currentDate, view]);
 

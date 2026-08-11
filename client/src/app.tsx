@@ -1,5 +1,5 @@
 import React from 'react';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 
 import Layout from './components/Layout';
@@ -16,8 +16,8 @@ import TestPlanDetailPage from './pages/test-plan-detail/TestPlanDetailPage';
 import DefectListPage from './pages/defect-list/DefectListPage';
 import DefectDetailPage from './pages/defect-detail/DefectDetailPage';
 import WorkbenchPage from './pages/workbench/WorkbenchPage';
-import PersonnelGanttPage from './pages/personnel-gantt/PersonnelGanttPage';
-import RequirementGanttPage from './pages/requirement-gantt/RequirementGanttPage';
+import ExceptionItemsPage from './pages/exception-items/ExceptionItemsPage';
+import ScheduleGanttPage from './pages/schedule-gantt/ScheduleGanttPage';
 
 const RoutesComponent = () => {
   const location = useLocation();
@@ -36,9 +36,11 @@ const RoutesComponent = () => {
           <Route path="test-plans/:id" element={<PageTransition><TestPlanDetailPage /></PageTransition>} />
           <Route path="defects" element={<PageTransition><DefectListPage /></PageTransition>} />
           <Route path="defects/:id" element={<PageTransition><DefectDetailPage /></PageTransition>} />
+          <Route path="exception-items" element={<PageTransition><ExceptionItemsPage /></PageTransition>} />
           <Route path="workbench" element={<PageTransition><WorkbenchPage /></PageTransition>} />
-          <Route path="personnel-gantt" element={<PageTransition><PersonnelGanttPage /></PageTransition>} />
-          <Route path="requirement-gantt" element={<PageTransition><RequirementGanttPage /></PageTransition>} />
+          <Route path="schedules" element={<PageTransition><ScheduleGanttPage /></PageTransition>} />
+          <Route path="personnel-gantt" element={<Navigate to="/schedules?tab=personnel" replace />} />
+          <Route path="requirement-gantt" element={<Navigate to="/schedules?tab=requirement" replace />} />
         </Route>
         <Route path="*" element={<NotFound />} />
       </Routes>

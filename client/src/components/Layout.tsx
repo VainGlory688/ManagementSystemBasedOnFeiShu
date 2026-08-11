@@ -10,7 +10,7 @@ import {
   Gamepad2,
   ChevronsRight,
   GanttChart,
-  BarChart3,
+  TriangleAlert,
 } from "lucide-react";
 
 import {
@@ -45,8 +45,8 @@ const navItems: NavItem[] = [
   { path: "/requirements", label: "需求管理", icon: ListTodo },
   { path: "/test-plans", label: "测试计划", icon: ClipboardList },
   { path: "/defects", label: "缺陷管理", icon: Bug },
-  { path: "/personnel-gantt", label: "人员排期", icon: GanttChart },
-  { path: "/requirement-gantt", label: "需求排期", icon: BarChart3 },
+  { path: "/schedules", label: "排期管理", icon: GanttChart },
+  { path: "/exception-items", label: "异常事项", icon: TriangleAlert },
   { path: "/workbench", label: "个人工作台", icon: UserSquare2},
 ];
 

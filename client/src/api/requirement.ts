@@ -8,6 +8,7 @@ import type {
   UpdateRequirementDto,
   RequirementPipelineConfig,
   UpdateRequirementPipelineDto,
+  ExceptionItemsResponse,
 } from '@shared/api.interface';
 
 export interface RequirementListParams {
@@ -20,6 +21,12 @@ export interface RequirementListParams {
   currentOwner?: string;
   currentStatus?: string;
   keyword?: string;
+}
+
+export interface ExceptionItemsParams extends RequirementListParams {
+  subPriority?: string;
+  subOwner?: string;
+  subKeyword?: string;
 }
 
 export async function getRequirementList(params: RequirementListParams = {}): Promise<RequirementListResponse> {
@@ -35,6 +42,25 @@ export async function getRequirementList(params: RequirementListParams = {}): Pr
     return response.data;
   } catch (error) {
     logger.error('获取需求列表失败', error);
+    throw error;
+  }
+}
+
+export async function getExceptionItems(
+  params: ExceptionItemsParams = {},
+): Promise<ExceptionItemsResponse> {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== '') query.set(k, String(v));
+  });
+  try {
+    const response = await axiosForBackend({
+      url: `/api/requirements/exceptions?${query.toString()}`,
+      method: 'GET',
+    });
+    return response.data;
+  } catch (error) {
+    logger.error('获取异常事项失败', error);
     throw error;
   }
 }

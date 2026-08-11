@@ -9,6 +9,7 @@ import {
   UpdateRequirementDto,
   RequirementPipelineConfig,
   UpdateRequirementPipelineDto,
+  ExceptionItemsResponse,
 } from '@shared/api.interface';
 import { RequirementService } from './requirement.service';
 
@@ -44,6 +45,32 @@ export class RequirementController {
       currentOwner: currentOwner === 'me' ? req.userContext?.userId || '' : currentOwner,
       currentStatus,
       keyword,
+    });
+  }
+
+  @Get('exceptions')
+  async getExceptionItems(
+    @Req() req: Request,
+    @Query('businessLine') businessLine?: string,
+    @Query('priority') priority?: string,
+    @Query('reqType') reqType?: string,
+    @Query('planningVersion') planningVersion?: string,
+    @Query('currentOwner') currentOwner?: string,
+    @Query('keyword') keyword?: string,
+    @Query('subPriority') subPriority?: string,
+    @Query('subOwner') subOwner?: string,
+    @Query('subKeyword') subKeyword?: string,
+  ): Promise<ExceptionItemsResponse> {
+    return this.requirementService.getExceptionItems({
+      businessLine,
+      priority,
+      reqType,
+      planningVersion,
+      currentOwner: currentOwner === 'me' ? req.userContext?.userId || '' : currentOwner,
+      keyword,
+      subPriority,
+      subOwner,
+      subKeyword,
     });
   }
 

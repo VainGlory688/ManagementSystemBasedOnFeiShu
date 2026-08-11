@@ -16,12 +16,14 @@ import {
   RequirementListResponse,
   VersionRequirement,
   SubRequirementListResponse,
+  SubRequirementItem,
   CreateRequirementDto,
   UpdateRequirementDto,
   RequirementPipelineConfig,
   RequirementPipelineEdge,
   RequirementCurrentStatus,
   UpdateRequirementPipelineDto,
+  ExceptionItemsResponse,
 } from '@shared/api.interface';
 import { isValidUuid } from '@server/common/utils/uuid';
 
@@ -35,6 +37,12 @@ interface ListQuery {
   currentOwner?: string;
   currentStatus?: string;
   keyword?: string;
+}
+
+interface ExceptionListQuery extends Omit<ListQuery, 'page' | 'pageSize' | 'currentStatus'> {
+  subPriority?: string;
+  subOwner?: string;
+  subKeyword?: string;
 }
 
 function extractParentRecordIds(value: unknown): string[] {
@@ -98,6 +106,18 @@ function calculateOverdueDays(
   const now = new Date();
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
   return Math.max(0, Math.floor((today - dueDate) / 86_400_000));
+}
+
+function toLocalDateKey(value: Date | string | null): string {
+  if (!value) return '';
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  }
+  return String(value).slice(0, 10);
+}
+
+function getTodayDateKey(): string {
+  return toLocalDateKey(new Date());
 }
 
 function hasCycle(edges: RequirementPipelineEdge[]): boolean {
@@ -211,6 +231,73 @@ export class RequirementService {
         };
       }),
       total,
+    };
+  }
+
+  async getExceptionItems(query: ExceptionListQuery): Promise<ExceptionItemsResponse> {
+    const {
+      subPriority,
+      subOwner,
+      subKeyword,
+      ...requirementQuery
+    } = query;
+    const requirements = await this.getList({
+      ...requirementQuery,
+      page: 1,
+      pageSize: 1_000,
+    });
+    const parentIds = [...new Set(
+      requirements.items.flatMap((item) =>
+        [item.id, item.baseRecordId].filter((id): id is string => Boolean(id)),
+      ),
+    )];
+    const parentNameMap = new Map<string, string>();
+    for (const item of requirements.items) {
+      parentNameMap.set(item.id, item.appReqName);
+      if (item.baseRecordId) parentNameMap.set(item.baseRecordId, item.appReqName);
+    }
+
+    const subItems = parentIds.length === 0
+      ? []
+      : await this.db
+          .select()
+          .from(subRequirementItem)
+          .where(
+            or(...parentIds.map((parentId) =>
+              sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
+                @> jsonb_build_array(${parentId}::text)`,
+            )),
+          );
+    const today = getTodayDateKey();
+    const todayDueSubRequirements = subItems
+      .filter((item) =>
+        toLocalDateKey(item.appExpectedEndDate) === today
+        && item.appStatus !== '已完成',
+      )
+      .filter((item) =>
+        (!subPriority || item.appPriority === subPriority)
+        && (!subOwner || item.appCurrentOwner === subOwner)
+        && (!subKeyword || (item.appSubRequirementName || '').toLowerCase().includes(subKeyword.toLowerCase())),
+      )
+      .map((item) => {
+        const subRequirement = this.mapSubRequirement(item);
+        const parentId = extractParentRecordIds(item.appParentWorkItem)[0];
+        subRequirement.appParentWorkItemRecordId = parentId;
+        subRequirement.appParentWorkItemName = parentId
+          ? parentNameMap.get(parentId)
+          : undefined;
+        return subRequirement;
+      })
+      .sort((a, b) => a.appSubRequirementName.localeCompare(b.appSubRequirementName, 'zh-CN'));
+
+    return {
+      overdueRequirements: requirements.items.filter(
+        (item) => item.currentStatus === '已逾期',
+      ),
+      unscheduledOrTodoRequirements: requirements.items.filter(
+        (item) => !item.planningVersion || item.currentStatus === '待拆分',
+      ),
+      todayDueSubRequirements,
     };
   }
 
@@ -541,6 +628,23 @@ export class RequirementService {
         ),
       ]),
     );
+  }
+
+  private mapSubRequirement(s: typeof subRequirementItem.$inferSelect): SubRequirementItem {
+    return {
+      id: s.id,
+      baseRecordId: s.baseRecordId || '',
+      updatedAt: s.updatedAt.toISOString(),
+      appSubRequirementName: s.appSubRequirementName || '',
+      appStatus: s.appStatus || '',
+      appCurrentOwner: s.appCurrentOwner || '',
+      appExpectedStartDate: s.appExpectedStartDate?.toString() || '',
+      appExpectedEndDate: s.appExpectedEndDate?.toString() || '',
+      appOverdueDays: calculateOverdueDays(s.appExpectedEndDate, s.appStatus),
+      appPriority: s.appPriority || '',
+      appDetails: s.appDetails || undefined,
+      appParentWorkItemName: undefined,
+    };
   }
 
 

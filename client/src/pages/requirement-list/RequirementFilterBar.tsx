@@ -37,10 +37,16 @@ function toFilterOptions(values: string[]): FilterOption[] {
 interface RequirementFilterBarProps {
   params: RequirementListParams;
   onChange: (params: RequirementListParams) => void;
-  onCreate: () => void;
+  onCreate?: () => void;
+  showCurrentStatusFilter?: boolean;
 }
 
-const RequirementFilterBar = ({ params, onChange, onCreate }: RequirementFilterBarProps) => {
+const RequirementFilterBar = ({
+  params,
+  onChange,
+  onCreate,
+  showCurrentStatusFilter = true,
+}: RequirementFilterBarProps) => {
   const [keywordInput, setKeywordInput] = useState(params.keyword || '');
   const ownerValue: string | null = params.currentOwner || null;
   const isCurrentUserFilter = ownerValue === 'me';
@@ -165,7 +171,9 @@ const RequirementFilterBar = ({ params, onChange, onCreate }: RequirementFilterB
   return (
     <div className="bg-card border border-border rounded-sm p-4 mb-4">
       <div className="flex items-center gap-3 flex-wrap">
-        {FILTER_CONFIGS.filter((c: FilterConfig) => c.key !== 'currentOwner').map((cfg: FilterConfig) => (
+        {FILTER_CONFIGS
+          .filter((c: FilterConfig) => c.key !== 'currentOwner' && (showCurrentStatusFilter || c.key !== 'currentStatus'))
+          .map((cfg: FilterConfig) => (
           <div key={cfg.key} className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground w-14 shrink-0">{cfg.label}</span>
             <Select
@@ -185,7 +193,7 @@ const RequirementFilterBar = ({ params, onChange, onCreate }: RequirementFilterB
               </SelectContent>
             </Select>
           </div>
-        ))}
+          ))}
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground w-14 shrink-0">负责人</span>
           <div className="w-[160px]">
@@ -210,9 +218,11 @@ const RequirementFilterBar = ({ params, onChange, onCreate }: RequirementFilterB
             )}
           </div>
         </div>
-        <Button size="sm" variant="default" onClick={onCreate}>
-          新建需求
-        </Button>
+        {onCreate && (
+          <Button size="sm" variant="default" onClick={onCreate}>
+            新建需求
+          </Button>
+        )}
         <form onSubmit={handleSearch} className="ml-auto flex items-center gap-2">
           <div className="relative w-[220px]">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
