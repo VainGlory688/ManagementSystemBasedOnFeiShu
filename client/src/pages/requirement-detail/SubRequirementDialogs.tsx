@@ -26,7 +26,6 @@ const formSchema = z.object({
   appCurrentOwner: z.string().optional().nullable(),
   appExpectedStartDate: z.string().optional(),
   appExpectedEndDate: z.string().optional(),
-  appOverdueDays: z.coerce.number().int().min(0, '逾期天数不能小于 0').optional(),
   appPriority: z.string().optional(),
   appDetails: z.string().optional(),
 });
@@ -39,7 +38,6 @@ const emptyValues: SubRequirementFormData = {
   appCurrentOwner: null,
   appExpectedStartDate: '',
   appExpectedEndDate: '',
-  appOverdueDays: 0,
   appPriority: '',
   appDetails: '',
 };
@@ -87,7 +85,6 @@ const SubRequirementDialogs = ({
             appCurrentOwner: item.appCurrentOwner || null,
             appExpectedStartDate: item.appExpectedStartDate,
             appExpectedEndDate: item.appExpectedEndDate,
-            appOverdueDays: item.appOverdueDays,
             appPriority: item.appPriority,
             appDetails: item.appDetails || '',
           });
@@ -114,7 +111,6 @@ const SubRequirementDialogs = ({
     const dto = {
       ...data,
       appCurrentOwner: data.appCurrentOwner || undefined,
-      appOverdueDays: data.appOverdueDays || 0,
     };
 
     try {
@@ -272,9 +268,6 @@ function SubRequirementForm({
             <FormItem><FormLabel>预计结束</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>
           )} />
         </div>
-        <FormField control={form.control} name="appOverdueDays" render={({ field }) => (
-          <FormItem><FormLabel>逾期天数</FormLabel><FormControl><Input type="number" min="0" {...field} /></FormControl><FormMessage /></FormItem>
-        )} />
         <FormField control={form.control} name="appDetails" render={({ field }) => (
           <FormItem><FormLabel>详情描述</FormLabel><FormControl><Textarea className="resize-none" rows={4} placeholder="请输入子需求详情" {...field} /></FormControl><FormMessage /></FormItem>
         )} />

@@ -28,12 +28,29 @@ function extractParentRecordIds(value: unknown): string[] {
 }
 
 function calculateRequirementStatus(
-  items: Array<{ appStatus: string | null; appOverdueDays: unknown }>,
+  items: Array<{ appStatus: string | null; appExpectedEndDate: Date | string | null }>,
 ): '待拆分' | '进行中' | '已完成' | '已逾期' {
   if (items.length === 0) return '待拆分';
   if (items.every((item) => item.appStatus === '已完成')) return '已完成';
-  if (items.some((item) => Number(item.appOverdueDays || 0) > 0)) return '已逾期';
+  if (items.some((item) => calculateOverdueDays(item.appExpectedEndDate, item.appStatus) > 0)) return '已逾期';
   return '进行中';
+}
+
+function calculateOverdueDays(
+  expectedEndDate: Date | string | null,
+  status: string | null,
+): number {
+  if (!expectedEndDate || status === '已完成') return 0;
+  const dateText = expectedEndDate instanceof Date
+    ? `${expectedEndDate.getFullYear()}-${String(expectedEndDate.getMonth() + 1).padStart(2, '0')}-${String(expectedEndDate.getDate()).padStart(2, '0')}`
+    : String(expectedEndDate).slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText);
+  if (!match) return 0;
+
+  const dueDate = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.max(0, Math.floor((today - dueDate) / 86_400_000));
 }
 
 interface ListQuery {
@@ -126,7 +143,7 @@ export class VersionService {
           .select({
             appParentWorkItem: subRequirementItem.appParentWorkItem,
             appStatus: subRequirementItem.appStatus,
-            appOverdueDays: subRequirementItem.appOverdueDays,
+            appExpectedEndDate: subRequirementItem.appExpectedEndDate,
           })
           .from(subRequirementItem)
           .where(

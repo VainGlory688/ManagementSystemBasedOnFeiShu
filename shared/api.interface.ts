@@ -281,7 +281,6 @@ export interface CreateSubRequirementDto {
   appCurrentOwner?: string;
   appExpectedStartDate?: string;
   appExpectedEndDate?: string;
-  appOverdueDays?: number;
   appPriority?: string;
   appParentWorkItem?: string;
   appDetails?: string;

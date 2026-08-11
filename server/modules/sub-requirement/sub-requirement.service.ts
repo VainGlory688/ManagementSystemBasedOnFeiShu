@@ -31,6 +31,23 @@ function extractParentRecordIds(value: unknown): string[] {
   return [];
 }
 
+function calculateOverdueDays(
+  expectedEndDate: Date | string | null,
+  status: string | null,
+): number {
+  if (!expectedEndDate || status === '已完成') return 0;
+  const dateText = expectedEndDate instanceof Date
+    ? `${expectedEndDate.getFullYear()}-${String(expectedEndDate.getMonth() + 1).padStart(2, '0')}-${String(expectedEndDate.getDate()).padStart(2, '0')}`
+    : String(expectedEndDate).slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText);
+  if (!match) return 0;
+
+  const dueDate = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.max(0, Math.floor((today - dueDate) / 86_400_000));
+}
+
 @Injectable()
 export class SubRequirementService {
   constructor(
@@ -138,7 +155,7 @@ export class SubRequirementService {
     const result = await this.db.execute(
       sql`INSERT INTO sub_requirement_item (
         app_sub_requirement_name, app_status, app_current_owner,
-        app_expected_start_date, app_expected_end_date, app_overdue_days,
+        app_expected_start_date, app_expected_end_date,
         app_priority, app_parent_work_item, app_details, _created_by, _updated_by
       ) VALUES (
         ${dto.appSubRequirementName},
@@ -146,7 +163,6 @@ export class SubRequirementService {
         ${dto.appCurrentOwner ? sql`ROW(${dto.appCurrentOwner})::user_profile` : null},
         ${dto.appExpectedStartDate || null}::date,
         ${dto.appExpectedEndDate || null}::date,
-        ${dto.appOverdueDays !== undefined ? String(dto.appOverdueDays) : null},
         ${dto.appPriority || null},
         ${dto.appParentWorkItem ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(${dto.appParentWorkItem}::text))` : null},
         ${dto.appDetails || null},
@@ -172,7 +188,6 @@ export class SubRequirementService {
     if (dto.appCurrentOwner !== undefined) setParts.push(sql`app_current_owner = ${dto.appCurrentOwner ? sql`ROW(${dto.appCurrentOwner})::user_profile` : null}`);
     if (dto.appExpectedStartDate !== undefined) setParts.push(sql`app_expected_start_date = ${dto.appExpectedStartDate || null}::date`);
     if (dto.appExpectedEndDate !== undefined) setParts.push(sql`app_expected_end_date = ${dto.appExpectedEndDate || null}::date`);
-    if (dto.appOverdueDays !== undefined) setParts.push(sql`app_overdue_days = ${String(dto.appOverdueDays)}`);
     if (dto.appPriority !== undefined) setParts.push(sql`app_priority = ${dto.appPriority || null}`);
     if (dto.appParentWorkItem !== undefined) setParts.push(sql`app_parent_work_item = ${dto.appParentWorkItem ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(${dto.appParentWorkItem}::text))` : null}`);
     if (dto.appDetails !== undefined) setParts.push(sql`app_details = ${dto.appDetails || null}`);
@@ -249,7 +264,7 @@ export class SubRequirementService {
       appCurrentOwner: s.appCurrentOwner || '',
       appExpectedStartDate: s.appExpectedStartDate?.toString() || '',
       appExpectedEndDate: s.appExpectedEndDate?.toString() || '',
-      appOverdueDays: Number(s.appOverdueDays ?? 0),
+      appOverdueDays: calculateOverdueDays(s.appExpectedEndDate, s.appStatus),
       appPriority: s.appPriority || '',
       appDetails: s.appDetails || undefined,
       appParentWorkItemName: undefined,
