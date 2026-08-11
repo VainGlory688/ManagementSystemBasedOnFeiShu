@@ -17,6 +17,9 @@ import { logger } from '@lark-apaas/client-toolkit/logger';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { UserDisplay } from '@/components/business-ui/user-display';
+import { PillBadge } from '@/pages/defect-list/badge-helpers';
+import { PriorityBadge } from '@/pages/test-plan-list/PriorityBadge';
+import { getStatusInfo } from '@/utils/version-helpers';
 
 import {
   getDashboardKpis,
@@ -104,39 +107,59 @@ function getActivityTypeLabel(type: ActivityType): string {
   }
 }
 
-function getStatusBadgeVariant(status: string): { className: string } {
-  const s = status.toLowerCase();
-  if (['致命', 'fatal', 'critical', 'p0'].includes(s)) {
-    return {
-      className:
-        'bg-[hsl(4_60%_95%)] text-[hsl(4_75%_52%)] border-transparent',
-    };
+function getDefectSeverityChartColor(severity: string): string {
+  switch (severity) {
+    case '紧急':
+    case '致命':
+      return 'hsl(4, 75%, 52%)';
+    case '严重':
+      return 'hsl(38, 90%, 50%)';
+    case '一般':
+      return 'hsl(160, 55%, 42%)';
+    case '优化':
+    case '提示':
+      return 'hsl(270, 45%, 55%)';
+    default:
+      return 'hsl(215, 12%, 58%)';
   }
-  if (['严重', '高', 'p1', 'major', 'high'].includes(s)) {
-    return {
-      className:
-        'bg-[hsl(28_70%_94%)] text-[hsl(28_85%_52%)] border-transparent',
-    };
+}
+
+function getVersionStatusChartColor(status: string): string {
+  switch (status) {
+    case '进行中':
+      return 'hsl(215, 60%, 28%)';
+    case '开发中':
+      return 'hsl(38, 90%, 50%)';
+    case '已发布':
+    case '已结束':
+      return 'hsl(160, 55%, 42%)';
+    case '未开始':
+    case '未启动':
+    case '已关闭':
+    default:
+      return 'hsl(215, 12%, 50%)';
   }
-  if (['中', 'normal', 'p2', 'medium'].includes(s)) {
-    return {
-      className:
-        'bg-[hsl(38_70%_93%)] text-[hsl(38_90%_50%)] border-transparent',
-    };
+}
+
+function ActivityStatusBadge({ item }: { item: RecentActivity }) {
+  if (item.type === 'defect') {
+    return <PillBadge text={item.status} variant="severity" />;
   }
-  if (
-    ['轻微', '低', 'p3', 'minor', 'low'].includes(s) ||
-    ['进行中', '测试中', '正常', '已完成'].includes(status)
-  ) {
-    return {
-      className:
-        'bg-[hsl(160_40%_94%)] text-[hsl(160_55%_42%)] border-transparent',
-    };
+
+  if (item.type === 'requirement') {
+    return <PriorityBadge priority={item.status} />;
   }
-  return {
-    className:
-      'bg-[hsl(215_15%_94%)] text-[hsl(215_25%_18%)] border-transparent',
-  };
+
+  const statusInfo = getStatusInfo(item.status);
+  return (
+    <Badge
+      variant="outline"
+      className={`h-[22px] px-2 text-xs font-medium rounded-full ${statusInfo.className}`}
+    >
+      <span className={`size-1.5 rounded-full mr-1.5 ${statusInfo.dot}`} />
+      {statusInfo.label}
+    </Badge>
+  );
 }
 
 /* ---------- 主组件 ---------- */
@@ -227,17 +250,11 @@ const DashboardPage = () => {
         animationDuration: 800,
         animationEasing: 'cubicOut',
         data: (defectSeverity?.items ?? []).map(
-          (item: { severity: string; count: number }, idx: number) => ({
+          (item: { severity: string; count: number }) => ({
             name: item.severity,
             value: item.count,
             itemStyle: {
-              color: [
-                'hsl(4, 75%, 52%)',
-                'hsl(28, 85%, 52%)',
-                'hsl(38, 90%, 50%)',
-                'hsl(215, 60%, 48%)',
-                'hsl(215, 12%, 58%)',
-              ][idx % 5],
+              color: getDefectSeverityChartColor(item.severity),
             },
           }),
         ),
@@ -385,17 +402,11 @@ const DashboardPage = () => {
         animationDuration: 800,
         animationEasing: 'cubicOut',
         data: (versionStatus?.items ?? []).map(
-          (item: { status: string; count: number }, idx: number) => ({
+          (item: { status: string; count: number }) => ({
             name: item.status,
             value: item.count,
             itemStyle: {
-              color: [
-                'hsl(215, 60%, 28%)',
-                'hsl(160, 55%, 42%)',
-                'hsl(38, 90%, 50%)',
-                'hsl(4, 75%, 52%)',
-                'hsl(215, 12%, 58%)',
-              ][idx % 5],
+              color: getVersionStatusChartColor(item.status),
             },
           }),
         ),
@@ -601,7 +612,6 @@ const DashboardPage = () => {
               <ul className="divide-y divide-border -mx-6">
                 {recentActivities.items.map(
                   (item: RecentActivity, idx: number) => {
-                    const badgeStyle = getStatusBadgeVariant(item.status);
                     return (
                       <motion.li
                         key={item.id}
@@ -631,12 +641,7 @@ const DashboardPage = () => {
                               <span className="truncate text-sm text-foreground font-medium">
                                 {item.title}
                               </span>
-                              <Badge
-                                className={badgeStyle.className}
-                                style={{ height: 20 }}
-                              >
-                                {item.status}
-                              </Badge>
+                              <ActivityStatusBadge item={item} />
                             </div>
                             <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
                               <span className="font-mono">
