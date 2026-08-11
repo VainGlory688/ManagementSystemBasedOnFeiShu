@@ -27,6 +27,7 @@ interface ListQuery {
   reqType?: string;
   planningVersion?: string;
   currentOwner?: string;
+  currentStatus?: string;
   keyword?: string;
 }
 
@@ -121,7 +122,17 @@ export class RequirementService {
   ) {}
 
   async getList(query: ListQuery): Promise<RequirementListResponse> {
-    const { page, pageSize, businessLine, priority, reqType, planningVersion, currentOwner, keyword } = query;
+    const {
+      page,
+      pageSize,
+      businessLine,
+      priority,
+      reqType,
+      planningVersion,
+      currentOwner,
+      currentStatus,
+      keyword,
+    } = query;
     const conditions = [];
     if (businessLine) conditions.push(eq(versionRequirement.businessLine, businessLine));
     if (priority) conditions.push(eq(versionRequirement.priority, priority));
@@ -132,16 +143,19 @@ export class RequirementService {
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-    const [itemsRes, totalRes] = await Promise.all([
-      this.db
-        .select()
-        .from(versionRequirement)
-        .where(where)
-        .orderBy(desc(versionRequirement.updatedAt))
-        .limit(pageSize)
-        .offset((page - 1) * pageSize),
-      this.db.select({ count: count() }).from(versionRequirement).where(where),
-    ]);
+    const allItems = await this.db
+      .select()
+      .from(versionRequirement)
+      .where(where)
+      .orderBy(desc(versionRequirement.updatedAt));
+    const statusMap = await this.getCurrentStatuses(allItems);
+    const matchedItems = currentStatus
+      ? allItems.filter(
+          (item) => (statusMap.get(item.id) || '待拆分') === currentStatus,
+        )
+      : allItems;
+    const total = matchedItems.length;
+    const itemsRes = matchedItems.slice((page - 1) * pageSize, page * pageSize);
 
     const versionIds = itemsRes
       .map((r) => r.planningVersion)
@@ -167,8 +181,6 @@ export class RequirementService {
         versionMap.set(version.baseRecordId, version);
       }
     }
-    const statusMap = await this.getCurrentStatuses(itemsRes);
-
     return {
       items: itemsRes.map((r) => {
         const v = r.planningVersion ? versionMap.get(r.planningVersion) : undefined;
@@ -191,7 +203,7 @@ export class RequirementService {
           description: r.description || '',
         };
       }),
-      total: Number(totalRes[0]?.count ?? 0),
+      total,
     };
   }
 

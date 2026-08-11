@@ -29,6 +29,7 @@ export class RequirementController {
     @Query('reqType') reqType?: string,
     @Query('planningVersion') planningVersion?: string,
     @Query('currentOwner') currentOwner?: string,
+    @Query('currentStatus') currentStatus?: string,
     @Query('keyword') keyword?: string,
   ): Promise<RequirementListResponse> {
     const pageNum = page ? parseInt(page, 10) : 1;
@@ -41,6 +42,7 @@ export class RequirementController {
       reqType,
       planningVersion,
       currentOwner: currentOwner === 'me' ? req.userContext?.userId || '' : currentOwner,
+      currentStatus,
       keyword,
     });
   }

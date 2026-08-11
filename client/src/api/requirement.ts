@@ -18,6 +18,7 @@ export interface RequirementListParams {
   reqType?: string;
   planningVersion?: string;
   currentOwner?: string;
+  currentStatus?: string;
   keyword?: string;
 }
 

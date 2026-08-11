@@ -73,6 +73,11 @@ const RequirementFilterBar = ({ params, onChange, onCreate }: RequirementFilterB
 
   const FILTER_CONFIGS: FilterConfig[] = [
     {
+      key: 'currentStatus',
+      label: '当前状态',
+      options: toFilterOptions(['待拆分', '进行中', '已完成', '已逾期']),
+    },
+    {
       key: 'businessLine',
       label: '业务线',
       options: toFilterOptions(fieldOptions['req_business_line'] || []),
