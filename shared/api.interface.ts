@@ -50,6 +50,19 @@ export interface RecentActivitiesResponse {
   items: RecentActivity[];
 }
 
+export interface Project {
+  id: string;
+  projectId: string;
+  projectName: string;
+  status: string;
+  description?: string;
+  updatedAt: string;
+}
+
+export interface ProjectListResponse {
+  items: Project[];
+}
+
 export interface MainVersion {
   id: string;
   baseRecordId: string;
@@ -362,5 +375,16 @@ export interface CreateDefectDto {
 }
 
 export interface UpdateDefectDto extends Partial<CreateDefectDto> {
+  expectedUpdatedAt?: string;
+}
+
+export interface CreateProjectDto {
+  projectId: string;
+  projectName: string;
+  status?: string;
+  description?: string;
+}
+
+export interface UpdateProjectDto extends Partial<CreateProjectDto> {
   expectedUpdatedAt?: string;
 }

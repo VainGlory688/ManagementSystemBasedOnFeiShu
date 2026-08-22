@@ -42,6 +42,7 @@ interface ListQuery {
   currentOwner?: string;
   currentStatus?: string;
   keyword?: string;
+  projectId?: string;
 }
 
 interface ExceptionListQuery extends Omit<ListQuery, 'page' | 'pageSize' | 'currentStatus'> {
@@ -149,7 +150,9 @@ export class RequirementService {
       currentOwner,
       currentStatus,
       keyword,
+      projectId,
     } = query;
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const conditions = [];
     if (businessLine) conditions.push(eq(versionRequirement.businessLine, businessLine));
     if (priority) conditions.push(eq(versionRequirement.priority, priority));
@@ -157,6 +160,7 @@ export class RequirementService {
     if (planningVersion) conditions.push(eq(versionRequirement.planningVersion, planningVersion));
     if (currentOwner) conditions.push(sql`(${versionRequirement.currentOwner}).user_id = ${currentOwner}`);
     if (keyword) conditions.push(ilike(versionRequirement.appReqName, `%${keyword}%`));
+    if (projectId) conditions.push(eq(versionRequirement.projectId, projectId));
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -165,7 +169,7 @@ export class RequirementService {
       .from(versionRequirement)
       .where(where)
       .orderBy(desc(versionRequirement.updatedAt));
-    const statusMap = await this.getCurrentStatuses(allItems);
+    const statusMap = await this.getCurrentStatuses(allItems, projectId);
     const matchedItems = currentStatus
       ? allItems.filter(
           (item) => (statusMap.get(item.id) || '待拆分') === currentStatus,
@@ -182,14 +186,15 @@ export class RequirementService {
       ? await this.db
           .select({ baseRecordId: mainVersionManage.baseRecordId, versionName: mainVersionManage.versionName, id: mainVersionManage.id })
           .from(mainVersionManage)
-          .where(
+          .where(and(
             localVersionIds.length > 0
               ? or(
                   inArray(mainVersionManage.baseRecordId, versionIds),
                   inArray(mainVersionManage.id, localVersionIds),
                 )
               : inArray(mainVersionManage.baseRecordId, versionIds),
-          )
+            projectId ? eq(mainVersionManage.projectId, projectId) : undefined,
+          ))
       : [];
     const versionMap = new Map<string, (typeof versions)[number]>();
     for (const version of versions) {
@@ -252,7 +257,8 @@ export class RequirementService {
       ? []
       : (await this.db
           .select()
-          .from(subRequirementItem))
+          .from(subRequirementItem)
+          .where(requirementQuery.projectId ? eq(subRequirementItem.projectId, requirementQuery.projectId) : undefined))
           .filter((item) =>
             extractParentRecordIds(item.appParentWorkItem)
               .some((parentId) => parentIds.includes(parentId)));
@@ -350,33 +356,38 @@ export class RequirementService {
       a.appSubRequirementName.localeCompare(b.appSubRequirementName, 'zh-CN'));
   }
 
-  async getDetail(id: string): Promise<VersionRequirement> {
+  async getDetail(id: string, projectId?: string): Promise<VersionRequirement> {
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const result = await this.db
       .select()
       .from(versionRequirement)
       .where(
+        and(
         isValidUuid(id)
           ? or(eq(versionRequirement.id, id), eq(versionRequirement.baseRecordId, id))
           : eq(versionRequirement.baseRecordId, id),
+        eq(versionRequirement.projectId, projectId),
+        )
       )
       .limit(1);
     if (result.length === 0) {
       throw new NotFoundException('需求不存在');
     }
     const r = result[0];
-    const statusMap = await this.getCurrentStatuses([r]);
+    const statusMap = await this.getCurrentStatuses([r], projectId);
     const version = r.planningVersion
       ? await this.db
           .select({ versionName: mainVersionManage.versionName, id: mainVersionManage.id })
           .from(mainVersionManage)
-          .where(
+          .where(and(
             isValidUuid(r.planningVersion)
               ? or(
                   eq(mainVersionManage.id, r.planningVersion),
                   eq(mainVersionManage.baseRecordId, r.planningVersion),
                 )
               : eq(mainVersionManage.baseRecordId, r.planningVersion),
-          )
+            eq(mainVersionManage.projectId, projectId),
+          ))
           .limit(1)
       : [];
     return {
@@ -405,12 +416,13 @@ export class RequirementService {
     id: string,
     dto: UpdateRequirementPipelineDto,
     userId: string,
+    projectId?: string,
   ): Promise<RequirementPipelineConfig> {
     if (!Array.isArray(dto?.edges) || dto.edges.length > 500) {
       throw new BadRequestException('流水线连线格式无效');
     }
 
-    const requirement = await this.getDetail(id);
+    const requirement = await this.getDetail(id, projectId);
     const parentRecordIds = [requirement.id, requirement.baseRecordId].filter(
       (value): value is string => Boolean(value),
     );
@@ -420,7 +432,7 @@ export class RequirementService {
         baseRecordId: subRequirementItem.baseRecordId,
       })
       .from(subRequirementItem)
-      .where(
+      .where(and(
         or(
           ...parentRecordIds.map(
             (parentRecordId) =>
@@ -428,7 +440,8 @@ export class RequirementService {
                 @> jsonb_build_array(${parentRecordId}::text)`,
           ),
         ),
-      );
+        eq(subRequirementItem.projectId, projectId!),
+      ));
 
     const stableIds = new Map<string, string>();
     for (const item of items) {
@@ -496,16 +509,23 @@ export class RequirementService {
     };
   }
 
-  async create(dto: CreateRequirementDto, userId: string): Promise<VersionRequirement> {
+  async create(
+    dto: CreateRequirementDto,
+    userId: string,
+    projectId?: string,
+  ): Promise<VersionRequirement> {
     if (!dto.appReqName?.trim()) {
       throw new BadRequestException('需求名称不能为空');
     }
-    const planningVersion = await this.resolvePlanningVersion(dto.planningVersion, userId);
+    if (!projectId) {
+      throw new BadRequestException('缺少当前项目');
+    }
+    const planningVersion = await this.resolvePlanningVersion(dto.planningVersion, projectId, userId);
     const result = await this.db.execute(
       sql`INSERT INTO version_requirement (
         app_req_name, current_owner, priority, req_type, business_line,
         planning_version, proposal_time, estimated_completion_time, creator, description,
-        _created_by, _updated_by
+        project_id, _created_by, _updated_by
       ) VALUES (
         ${dto.appReqName},
         ${dto.currentOwner ? sql`ROW(${dto.currentOwner})::user_profile` : null},
@@ -517,23 +537,24 @@ export class RequirementService {
         ${dto.estimatedCompletionTime || null}::date,
         ${userId ? sql`ROW(${userId})::user_profile` : null},
         ${dto.description || null},
+        ${projectId},
         ${userId ? sql`ROW(${userId})::user_profile` : null},
         ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
-    return this.getDetail(rows[0].id);
+    return this.getDetail(rows[0].id, projectId);
   }
 
-  async update(id: string, dto: UpdateRequirementDto, userId: string): Promise<VersionRequirement> {
-    const requirement = await this.getDetail(id);
+  async update(id: string, dto: UpdateRequirementDto, userId: string, projectId?: string): Promise<VersionRequirement> {
+    const requirement = await this.getDetail(id, projectId);
     if (dto.appReqName !== undefined && !dto.appReqName.trim()) {
       throw new BadRequestException('需求名称不能为空');
     }
     const setParts: any[] = [];
     const planningVersion =
       dto.planningVersion !== undefined
-        ? await this.resolvePlanningVersion(dto.planningVersion, userId)
+        ? await this.resolvePlanningVersion(dto.planningVersion, projectId, userId)
         : undefined;
     if (dto.appReqName !== undefined) setParts.push(sql`app_req_name = ${dto.appReqName}`);
     if (dto.currentOwner !== undefined) setParts.push(sql`current_owner = ${dto.currentOwner ? sql`ROW(${dto.currentOwner})::user_profile` : null}`);
@@ -546,7 +567,7 @@ export class RequirementService {
     if (dto.description !== undefined) setParts.push(sql`description = ${dto.description || null}`);
 
     if (setParts.length === 0) {
-      return this.getDetail(id);
+      return this.getDetail(id, projectId);
     }
     setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
     setParts.push(sql`_updated_at = now()`);
@@ -565,18 +586,18 @@ export class RequirementService {
     if (rows.length === 0) {
       throw new ConflictException('需求已被其他人修改，请刷新后重试');
     }
-    return this.getDetail(rows[0].id);
+    return this.getDetail(rows[0].id, projectId);
   }
 
-  async delete(id: string): Promise<void> {
-    const requirement = await this.getDetail(id);
+  async delete(id: string, projectId?: string): Promise<void> {
+    const requirement = await this.getDetail(id, projectId);
     const parentRecordIds = [requirement.id, requirement.baseRecordId].filter(
       (value): value is string => Boolean(value),
     );
     const subRequirement = await this.db
       .select({ id: subRequirementItem.id })
       .from(subRequirementItem)
-      .where(
+      .where(and(
         or(
           ...parentRecordIds.map(
             (parentRecordId) =>
@@ -584,7 +605,8 @@ export class RequirementService {
                 @> jsonb_build_array(${parentRecordId}::text)`,
           ),
         ),
-      )
+        eq(subRequirementItem.projectId, projectId!),
+      ))
       .limit(1);
     if (subRequirement.length > 0) {
       throw new ConflictException('需求下仍存在子需求，无法删除');
@@ -598,7 +620,7 @@ export class RequirementService {
     }
   }
 
-  private async resolvePlanningVersion(value?: string, userId?: string): Promise<string | null> {
+  private async resolvePlanningVersion(value: string | undefined, projectId: string | undefined, userId?: string): Promise<string | null> {
     if (!value) return null;
 
     const versions = await this.db
@@ -607,14 +629,15 @@ export class RequirementService {
         baseRecordId: mainVersionManage.baseRecordId,
       })
       .from(mainVersionManage)
-      .where(
+      .where(and(
         isValidUuid(value)
           ? or(
               eq(mainVersionManage.id, value),
               eq(mainVersionManage.baseRecordId, value),
             )
           : eq(mainVersionManage.baseRecordId, value),
-      )
+        projectId ? eq(mainVersionManage.projectId, projectId) : undefined,
+      ))
       .limit(1);
 
     const version = versions[0];
@@ -642,6 +665,7 @@ export class RequirementService {
 
   private async getCurrentStatuses(
     requirements: Array<Pick<typeof versionRequirement.$inferSelect, 'id' | 'baseRecordId'>>,
+    projectId?: string,
   ): Promise<Map<string, RequirementCurrentStatus>> {
     const parentIds = [...new Set(
       requirements.flatMap((requirement) =>
@@ -660,12 +684,13 @@ export class RequirementService {
             appExpectedEndDate: subRequirementItem.appExpectedEndDate,
           })
           .from(subRequirementItem)
-          .where(
+          .where(and(
             or(...parentIds.map((parentId) =>
               sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
                 @> jsonb_build_array(${parentId}::text)`,
             )),
-          );
+            projectId ? eq(subRequirementItem.projectId, projectId) : undefined,
+          ));
     const itemsByParent = new Map<string, typeof items>();
     for (const item of items) {
       for (const parentId of extractParentRecordIds(item.appParentWorkItem)) {
@@ -727,15 +752,18 @@ export class RequirementService {
     };
   }
 
-  async getSubItems(requirementId: string, page: number, pageSize: number): Promise<SubRequirementListResponse> {
-    const req = await this.getDetail(requirementId);
+  async getSubItems(requirementId: string, page: number, pageSize: number, projectId?: string): Promise<SubRequirementListResponse> {
+    const req = await this.getDetail(requirementId, projectId);
     const parentRecordIds = [req.id, req.baseRecordId].filter(
       (value): value is string => Boolean(value),
     );
-    const where = or(...parentRecordIds.map((parentRecordId) =>
-      sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
-        @> jsonb_build_array(${parentRecordId}::text)`,
-    ));
+    const where = and(
+      or(...parentRecordIds.map((parentRecordId) =>
+        sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
+          @> jsonb_build_array(${parentRecordId}::text)`,
+      )),
+      eq(subRequirementItem.projectId, projectId!),
+    );
 
     const [itemsRes, totalRes] = await Promise.all([
       this.db
@@ -762,7 +790,7 @@ export class RequirementService {
           appReqName: versionRequirement.appReqName,
         })
         .from(versionRequirement)
-        .where(inArray(versionRequirement.baseRecordId, allParentIds));
+        .where(and(inArray(versionRequirement.baseRecordId, allParentIds), eq(versionRequirement.projectId, projectId!)));
       nameMap = new Map(
         reqs.map((r) => [r.baseRecordId, r.appReqName || '']),
       );

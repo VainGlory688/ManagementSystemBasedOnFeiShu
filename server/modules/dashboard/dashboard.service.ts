@@ -22,7 +22,7 @@ export class DashboardService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
   ) {}
 
-  async getKpis(planningVersion?: string): Promise<DashboardKpis> {
+  async getKpis(planningVersion?: string, projectId?: string): Promise<DashboardKpis> {
     const parentRequirementIds = planningVersion
       ? await this.getParentRequirementIds(planningVersion)
       : [];
@@ -36,25 +36,37 @@ export class DashboardService {
               eq(mainVersionManage.baseRecordId, planningVersion),
               inArray(mainVersionManage.appStatus, ['开发中', '进行中']),
             )
-          : inArray(mainVersionManage.appStatus, ['开发中', '进行中'])),
+          : and(
+              inArray(mainVersionManage.appStatus, ['开发中', '进行中']),
+              projectId ? eq(mainVersionManage.projectId, projectId) : undefined,
+            )),
       this.db.select({ count: count() }).from(versionRequirement)
         .where(planningVersion
           ? and(
               eq(versionRequirement.planningVersion, planningVersion),
               eq(versionRequirement.priority, 'P0'),
             )
-          : eq(versionRequirement.priority, 'P0')),
+          : and(
+              eq(versionRequirement.priority, 'P0'),
+              projectId ? eq(versionRequirement.projectId, projectId) : undefined,
+            )),
       this.db.select({ count: count() }).from(defectItem)
         .where(defectScope
           ? and(defectScope, sql`${defectItem.status} NOT IN ('已关闭', '已驳回')`)
-          : sql`${defectItem.status} NOT IN ('已关闭', '已驳回')`),
+          : and(
+              sql`${defectItem.status} NOT IN ('已关闭', '已驳回')`,
+              projectId ? eq(defectItem.projectId, projectId) : undefined,
+            )),
       this.db.select({ count: count() }).from(testPlan)
         .where(planningVersion
           ? and(
               sql`${testPlan.relatedVersion}::text LIKE '%' || ${planningVersion} || '%'`,
               inArray(testPlan.testStatus, ['进行中', '测试中']),
             )
-          : inArray(testPlan.testStatus, ['进行中', '测试中'])),
+          : and(
+              inArray(testPlan.testStatus, ['进行中', '测试中']),
+              projectId ? eq(testPlan.projectId, projectId) : undefined,
+            )),
     ]);
     return {
       activeVersions: Number(versionRes[0]?.count ?? 0),
@@ -64,10 +76,10 @@ export class DashboardService {
     };
   }
 
-  async getDefectSeverity(planningVersion?: string): Promise<DefectSeverityResponse> {
+  async getDefectSeverity(planningVersion?: string, projectId?: string): Promise<DefectSeverityResponse> {
     const defectScope = planningVersion
       ? this.getDefectScope(await this.getParentRequirementIds(planningVersion))
-      : undefined;
+      : projectId ? eq(defectItem.projectId, projectId) : undefined;
     const result = await this.db
       .select({
         severity: defectItem.severity,
@@ -84,17 +96,19 @@ export class DashboardService {
     };
   }
 
-  async getBusinessLineStats(planningVersion?: string): Promise<BusinessLineStatsResponse> {
+  async getBusinessLineStats(planningVersion?: string, projectId?: string): Promise<BusinessLineStatsResponse> {
     const defectScope = planningVersion
       ? this.getDefectScope(await this.getParentRequirementIds(planningVersion))
-      : undefined;
+      : projectId ? eq(defectItem.projectId, projectId) : undefined;
     const reqResult = await this.db
       .select({
         businessLine: versionRequirement.businessLine,
         count: count(),
       })
       .from(versionRequirement)
-      .where(planningVersion ? eq(versionRequirement.planningVersion, planningVersion) : undefined)
+      .where(planningVersion
+        ? eq(versionRequirement.planningVersion, planningVersion)
+        : projectId ? eq(versionRequirement.projectId, projectId) : undefined)
       .groupBy(versionRequirement.businessLine);
 
     const defectResult = await this.db
@@ -122,13 +136,14 @@ export class DashboardService {
     return { items: Array.from(map.values()) };
   }
 
-  async getVersionStatus(): Promise<VersionStatusResponse> {
+  async getVersionStatus(projectId?: string): Promise<VersionStatusResponse> {
     const result = await this.db
       .select({
         status: mainVersionManage.appStatus,
         count: count(),
       })
       .from(mainVersionManage)
+      .where(projectId ? eq(mainVersionManage.projectId, projectId) : undefined)
       .groupBy(mainVersionManage.appStatus);
     return {
       items: result.map((r) => ({
@@ -138,7 +153,7 @@ export class DashboardService {
     };
   }
 
-  async getRecentActivities(limit: number): Promise<RecentActivitiesResponse> {
+  async getRecentActivities(limit: number, projectId?: string): Promise<RecentActivitiesResponse> {
     const [versions, requirements, defects] = await Promise.all([
       this.db
         .select({
@@ -149,6 +164,7 @@ export class DashboardService {
           updatedAt: mainVersionManage.updatedAt,
         })
         .from(mainVersionManage)
+        .where(projectId ? eq(mainVersionManage.projectId, projectId) : undefined)
         .orderBy(desc(mainVersionManage.updatedAt))
         .limit(limit),
       this.db
@@ -161,6 +177,7 @@ export class DashboardService {
           ownerId: versionRequirement.currentOwner,
         })
         .from(versionRequirement)
+        .where(projectId ? eq(versionRequirement.projectId, projectId) : undefined)
         .orderBy(desc(versionRequirement.updatedAt))
         .limit(limit),
       this.db
@@ -172,6 +189,7 @@ export class DashboardService {
           updatedAt: defectItem.updatedAt,
         })
         .from(defectItem)
+        .where(projectId ? eq(defectItem.projectId, projectId) : undefined)
         .orderBy(desc(defectItem.updatedAt))
         .limit(limit),
     ]);

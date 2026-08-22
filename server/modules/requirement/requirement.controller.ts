@@ -32,6 +32,7 @@ export class RequirementController {
     @Query('currentOwner') currentOwner?: string,
     @Query('currentStatus') currentStatus?: string,
     @Query('keyword') keyword?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<RequirementListResponse> {
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 20;
@@ -45,6 +46,7 @@ export class RequirementController {
       currentOwner: currentOwner === 'me' ? req.userContext?.userId || '' : currentOwner,
       currentStatus,
       keyword,
+      projectId,
     });
   }
 
@@ -60,6 +62,7 @@ export class RequirementController {
     @Query('subPriority') subPriority?: string,
     @Query('subOwner') subOwner?: string,
     @Query('subKeyword') subKeyword?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<ExceptionItemsResponse> {
     return this.requirementService.getExceptionItems({
       businessLine,
@@ -71,12 +74,13 @@ export class RequirementController {
       subPriority,
       subOwner,
       subKeyword,
+      projectId,
     });
   }
 
   @Get(':id')
-  async getDetail(@Param('id') id: string): Promise<VersionRequirement> {
-    return this.requirementService.getDetail(id);
+  async getDetail(@Param('id') id: string, @Query('projectId') projectId?: string): Promise<VersionRequirement> {
+    return this.requirementService.getDetail(id, projectId);
   }
 
   @Get(':id/sub-items')
@@ -84,17 +88,22 @@ export class RequirementController {
     @Param('id') id: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<SubRequirementListResponse> {
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 20;
-    return this.requirementService.getSubItems(id, pageNum, sizeNum);
+    return this.requirementService.getSubItems(id, pageNum, sizeNum, projectId);
   }
 
   @NeedLogin()
   @Post()
-  async create(@Req() req: Request, @Body() dto: CreateRequirementDto): Promise<VersionRequirement> {
+  async create(
+    @Req() req: Request,
+    @Body() dto: CreateRequirementDto,
+    @Query('projectId') projectId?: string,
+  ): Promise<VersionRequirement> {
     const { userId } = req.userContext;
-    return this.requirementService.create(dto, userId);
+    return this.requirementService.create(dto, userId, projectId);
   }
 
   @NeedLogin()
@@ -103,8 +112,9 @@ export class RequirementController {
     @Param('id') id: string,
     @Req() req: Request,
     @Body() dto: UpdateRequirementDto,
+    @Query('projectId') projectId?: string,
   ): Promise<VersionRequirement> {
-    return this.requirementService.update(id, dto, req.userContext.userId);
+    return this.requirementService.update(id, dto, req.userContext.userId, projectId);
   }
 
   @NeedLogin()
@@ -113,13 +123,14 @@ export class RequirementController {
     @Param('id') id: string,
     @Req() req: Request,
     @Body() dto: UpdateRequirementPipelineDto,
+    @Query('projectId') projectId?: string,
   ): Promise<RequirementPipelineConfig> {
-    return this.requirementService.updatePipeline(id, dto, req.userContext.userId);
+    return this.requirementService.updatePipeline(id, dto, req.userContext.userId, projectId);
   }
 
   @NeedLogin()
   @Delete(':id')
-  async delete(@Param('id') id: string): Promise<void> {
-    return this.requirementService.delete(id);
+  async delete(@Param('id') id: string, @Query('projectId') projectId?: string): Promise<void> {
+    return this.requirementService.delete(id, projectId);
   }
 }

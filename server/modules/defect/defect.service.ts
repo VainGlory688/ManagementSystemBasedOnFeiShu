@@ -32,6 +32,7 @@ interface ListQuery {
   planningVersion?: string;
   currentOwner?: string;
   keyword?: string;
+  projectId?: string;
 }
 
 const SEVERITY_ORDER: Record<string, number> = {
@@ -100,7 +101,8 @@ export class DefectService {
   ) {}
 
   async getList(query: ListQuery): Promise<DefectListResponse> {
-    const { page, pageSize, status, severity, priority, businessLine, discoveryEnvironment, testingStage, planningVersion, currentOwner, keyword } = query;
+    const { page, pageSize, status, severity, priority, businessLine, discoveryEnvironment, testingStage, planningVersion, currentOwner, keyword, projectId } = query;
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const conditions = [];
     if (status) conditions.push(eq(defectItem.status, status));
     if (severity) conditions.push(eq(defectItem.severity, severity));
@@ -115,7 +117,10 @@ export class DefectService {
           baseRecordId: versionRequirement.baseRecordId,
         })
         .from(versionRequirement)
-        .where(eq(versionRequirement.planningVersion, planningVersion));
+        .where(and(
+          eq(versionRequirement.planningVersion, planningVersion),
+          projectId ? eq(versionRequirement.projectId, projectId) : undefined,
+        ));
       const parentIds = [...new Set(
         requirements.flatMap((requirement) =>
           [requirement.id, requirement.baseRecordId].filter(
@@ -136,6 +141,7 @@ export class DefectService {
     }
     if (currentOwner) conditions.push(sql`${currentOwner} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${defectItem.currentOwner}) u))`);
     if (keyword) conditions.push(ilike(defectItem.defectName, `%${keyword}%`));
+    if (projectId) conditions.push(eq(defectItem.projectId, projectId));
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -151,7 +157,7 @@ export class DefectService {
     ]);
 
     const items = itemsRes.map((d) => this.mapDefect(d));
-    await this.enrichRelations(items, itemsRes.map((item) => item.appParentOrder));
+    await this.enrichRelations(items, itemsRes.map((item) => item.appParentOrder), projectId);
     items.sort((a, b) => {
       const sa = SEVERITY_ORDER[a.severity] ?? 99;
       const sb = SEVERITY_ORDER[b.severity] ?? 99;
@@ -164,27 +170,39 @@ export class DefectService {
     };
   }
 
-  async getDetail(id: string): Promise<DefectItem> {
+  async getDetail(id: string, projectId?: string): Promise<DefectItem> {
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const result = await this.db
       .select()
       .from(defectItem)
       .where(
+        and(
         isValidUuid(id)
           ? or(eq(defectItem.id, id), eq(defectItem.baseRecordId, id))
           : eq(defectItem.baseRecordId, id),
+        eq(defectItem.projectId, projectId),
+        )
       )
       .limit(1);
     if (result.length === 0) {
       throw new NotFoundException('缺陷不存在');
     }
     const item = this.mapDefect(result[0], true);
-    await this.enrichRelations([item], [result[0].appParentOrder]);
+    await this.enrichRelations([item], [result[0].appParentOrder], projectId);
     return item;
   }
 
-  async create(dto: CreateDefectDto, userId: string): Promise<DefectItem> {
+  async create(
+    dto: CreateDefectDto,
+    userId: string,
+    projectId?: string,
+  ): Promise<DefectItem> {
     requireName(dto.defectName, '缺陷名称');
     validateRejectionReason(dto.status, dto.rejectionReason);
+    if (!projectId) {
+      throw new BadRequestException('缺少当前项目');
+    }
+    const parentRequirement = await this.resolveParentRequirement(dto.appParentOrder, projectId);
     const ownerProfiles = dto.currentOwner && dto.currentOwner.length > 0
       ? sql`ARRAY[${sql.join(dto.currentOwner.map((id: string) => sql`ROW(${id})::user_profile`), sql`, `)}]::user_profile[]`
       : null;
@@ -192,7 +210,7 @@ export class DefectService {
       sql`INSERT INTO defect_item (
         defect_name, status, severity, priority, current_owner, business_line,
         rejection_reason, discovery_environment, testing_stage, creator, detail, app_parent_order,
-        _created_by, _updated_by
+        project_id, _created_by, _updated_by
       ) VALUES (
         ${dto.defectName},
         ${dto.status || null},
@@ -205,17 +223,18 @@ export class DefectService {
         ${dto.testingStage || null},
         ${userId ? sql`ROW(${userId})::user_profile` : null},
         ${dto.detail || null},
-        ${dto.appParentOrder ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(CAST(${dto.appParentOrder} AS text)))` : null},
+        ${parentRequirement ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(CAST(${parentRequirement} AS text)))` : null},
+        ${projectId},
         ${userId ? sql`ROW(${userId})::user_profile` : null},
         ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
-    return this.getDetail(rows[0].id);
+    return this.getDetail(rows[0].id, projectId);
   }
 
-  async update(id: string, dto: UpdateDefectDto, userId: string): Promise<DefectItem> {
-    const defect = await this.getDetail(id);
+  async update(id: string, dto: UpdateDefectDto, userId: string, projectId?: string): Promise<DefectItem> {
+    const defect = await this.getDetail(id, projectId);
     if (dto.defectName !== undefined) requireName(dto.defectName, '缺陷名称');
     const nextStatus = dto.status ?? defect.status;
     const nextRejectionReason = dto.rejectionReason ?? defect.rejectionReason;
@@ -245,7 +264,10 @@ export class DefectService {
     if (dto.discoveryEnvironment !== undefined) setParts.push(sql`discovery_environment = ${dto.discoveryEnvironment || null}`);
     if (dto.testingStage !== undefined) setParts.push(sql`testing_stage = ${dto.testingStage || null}`);
     if (dto.detail !== undefined) setParts.push(sql`detail = ${dto.detail || null}`);
-    if (dto.appParentOrder !== undefined) setParts.push(sql`app_parent_order = ${dto.appParentOrder ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(CAST(${dto.appParentOrder} AS text)))` : null}`);
+    const parentRequirement = dto.appParentOrder !== undefined
+      ? await this.resolveParentRequirement(dto.appParentOrder, projectId!)
+      : undefined;
+    if (dto.appParentOrder !== undefined) setParts.push(sql`app_parent_order = ${parentRequirement ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(CAST(${parentRequirement} AS text)))` : null}`);
 
     if (setParts.length === 0) {
       return defect;
@@ -267,11 +289,11 @@ export class DefectService {
     if (rows.length === 0) {
       throw new ConflictException('缺陷已被其他人修改，请刷新后重试');
     }
-    return this.getDetail(rows[0].id);
+    return this.getDetail(rows[0].id, projectId);
   }
 
-  async delete(id: string): Promise<void> {
-    const defect = await this.getDetail(id);
+  async delete(id: string, projectId?: string): Promise<void> {
+    const defect = await this.getDetail(id, projectId);
     const result = await this.db
       .delete(defectItem)
       .where(eq(defectItem.id, defect.id))
@@ -306,9 +328,26 @@ export class DefectService {
     };
   }
 
+  private async resolveParentRequirement(value: string | undefined, projectId: string): Promise<string | null> {
+    if (!value) return null;
+    const rows = await this.db
+      .select({ id: versionRequirement.id, baseRecordId: versionRequirement.baseRecordId })
+      .from(versionRequirement)
+      .where(and(
+        isValidUuid(value)
+          ? or(eq(versionRequirement.id, value), eq(versionRequirement.baseRecordId, value))
+          : eq(versionRequirement.baseRecordId, value),
+        eq(versionRequirement.projectId, projectId),
+      ))
+      .limit(1);
+    if (!rows[0]) throw new BadRequestException('关联需求不存在或不属于当前项目');
+    return rows[0].baseRecordId || rows[0].id;
+  }
+
   private async enrichRelations(
     defects: DefectItem[],
     parentRelations: unknown[],
+    projectId?: string,
   ): Promise<void> {
     const candidates = parentRelations.map(extractRelationCandidates);
     const identifiers = [...new Set(candidates.flatMap((item) => item.identifiers))];
@@ -335,7 +374,7 @@ export class DefectService {
         planningVersion: versionRequirement.planningVersion,
       })
       .from(versionRequirement)
-      .where(or(...requirementConditions));
+      .where(and(or(...requirementConditions), projectId ? eq(versionRequirement.projectId, projectId) : undefined));
 
     const requirementsByIdentifier = new Map<string, (typeof requirements)[number]>();
     const requirementsByName = new Map<string, (typeof requirements)[number]>();
@@ -373,14 +412,15 @@ export class DefectService {
             versionName: mainVersionManage.versionName,
           })
           .from(mainVersionManage)
-          .where(
+          .where(and(
             localVersionIds.length > 0
               ? or(
                   inArray(mainVersionManage.baseRecordId, versionKeys),
                   inArray(mainVersionManage.id, localVersionIds),
                 )
               : inArray(mainVersionManage.baseRecordId, versionKeys),
-          );
+            projectId ? eq(mainVersionManage.projectId, projectId) : undefined,
+          ));
     const versionsByKey = new Map<string, (typeof versions)[number]>();
     for (const version of versions) {
       versionsByKey.set(version.id, version);

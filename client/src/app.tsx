@@ -18,6 +18,9 @@ import DefectDetailPage from './pages/defect-detail/DefectDetailPage';
 import WorkbenchPage from './pages/workbench/WorkbenchPage';
 import ExceptionItemsPage from './pages/exception-items/ExceptionItemsPage';
 import ScheduleGanttPage from './pages/schedule-gantt/ScheduleGanttPage';
+import ProjectListPage from './pages/project-list/ProjectListPage';
+import { ProjectScope } from './components/ProjectScope';
+import { ProjectRedirect } from './components/ProjectRedirect';
 
 const RoutesComponent = () => {
   const location = useLocation();
@@ -25,8 +28,11 @@ const RoutesComponent = () => {
   return (
     <AnimatePresence mode="wait">
       <Routes location={location} key={location.pathname}>
+        <Route path="projects" element={<ProjectListPage />} />
+        <Route path="projects/:projectId" element={<ProjectScope />}>
         <Route element={<Layout />}>
-          <Route index element={<PageTransition><DashboardPage /></PageTransition>} />
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<PageTransition><DashboardPage /></PageTransition>} />
           <Route path="versions" element={<PageTransition><VersionListPage /></PageTransition>} />
           <Route path="versions/:id" element={<PageTransition><VersionDetailPage /></PageTransition>} />
           <Route path="requirements" element={<PageTransition><RequirementListPage /></PageTransition>} />
@@ -41,8 +47,9 @@ const RoutesComponent = () => {
           <Route path="schedules" element={<PageTransition><ScheduleGanttPage /></PageTransition>} />
           <Route path="personnel-gantt" element={<Navigate to="/schedules?tab=personnel" replace />} />
           <Route path="requirement-gantt" element={<Navigate to="/schedules?tab=requirement" replace />} />
-        </Route>
-        <Route path="*" element={<NotFound />} />
+        </Route></Route>
+        <Route path="/" element={<Navigate to="/projects" replace />} />
+        <Route path="*" element={<ProjectRedirect />} />
       </Routes>
     </AnimatePresence>
   );

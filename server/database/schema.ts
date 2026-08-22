@@ -117,6 +117,20 @@ export const fileAttachmentArray = customType<{
   },
 });
 
+export const project = pgTable("project", {
+  id: uuid("id").primaryKey().unique().defaultRandom(),
+  projectId: text("project_id").notNull(),
+  projectName: text("project_name").notNull(),
+  status: text("status"),
+  description: text("description"),
+  createdAt: customTimestamptz("_created_at", { precision: 6 }).notNull().default(sql`now()`),
+  createdBy: userProfile("_created_by"),
+  updatedAt: customTimestamptz("_updated_at", { precision: 6 }).notNull().default(sql`now()`),
+  updatedBy: userProfile("_updated_by"),
+}, (table) => [
+  uniqueIndex("unq_project_id").on(table.projectId),
+]);
+
 // Synced table: data is auto-synced from external source. Do not rename or delete this table.
 export const testPlan = pgTable("test_plan", {
   id: uuid("id").primaryKey().unique().defaultRandom(),
@@ -143,6 +157,7 @@ export const testPlan = pgTable("test_plan", {
    */
   // Synced field: auto-synced, do not modify or delete
   relatedVersion: jsonb("related_version"),
+  projectId: text("project_id").notNull(),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 6 }).notNull().default(sql`now()`),
   // System field: Creator (auto-filled, do not modify)
@@ -188,6 +203,7 @@ export const defectItem = pgTable("defect_item", {
   appParentOrder: jsonb("app_parent_order"),
   // Synced field: auto-synced, do not modify or delete
   detail: text("detail"),
+  projectId: text("project_id").notNull(),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 6 }).notNull().default(sql`now()`),
   // System field: Creator (auto-filled, do not modify)
@@ -227,6 +243,7 @@ export const subRequirementItem = pgTable("sub_requirement_item", {
   appParentWorkItem: jsonb("app_parent_work_item"),
   // Synced field: auto-synced, do not modify or delete
   appDetails: text("app_details"),
+  projectId: text("project_id").notNull(),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 6 }).notNull().default(sql`now()`),
   // System field: Creator (auto-filled, do not modify)
@@ -270,6 +287,7 @@ export const versionRequirement = pgTable("version_requirement", {
   subRequirementItem: jsonb("sub_requirement_item"),
   // Synced field: auto-synced, do not modify or delete
   description: text("description"),
+  projectId: text("project_id").notNull(),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 6 }).notNull().default(sql`now()`),
   // System field: Creator (auto-filled, do not modify)
@@ -319,6 +337,7 @@ export const mainVersionManage = pgTable("main_version_manage", {
   versionType: text("version_type"),
   // Synced field: auto-synced, do not modify or delete
   rollbackReasonAndProcess: text("rollback_reason_and_process"),
+  projectId: text("project_id").notNull(),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 6 }).notNull().default(sql`now()`),
   // System field: Creator (auto-filled, do not modify)
@@ -335,6 +354,7 @@ export const mainVersionManage = pgTable("main_version_manage", {
 // table aliases
 export const defectItemTable = defectItem;
 export const mainVersionManageTable = mainVersionManage;
+export const projectTable = project;
 export const subRequirementItemTable = subRequirementItem;
 export const testPlanTable = testPlan;
 export const versionRequirementTable = versionRequirement;

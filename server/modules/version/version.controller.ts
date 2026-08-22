@@ -27,6 +27,7 @@ export class VersionController {
     @Query('versionType') versionType?: string,
     @Query('priority') priority?: string,
     @Query('keyword') keyword?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<VersionListResponse> {
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 20;
@@ -38,12 +39,13 @@ export class VersionController {
       versionType,
       priority,
       keyword,
+      projectId,
     });
   }
 
   @Get(':id')
-  async getDetail(@Param('id') id: string): Promise<MainVersion> {
-    return this.versionService.getDetail(id);
+  async getDetail(@Param('id') id: string, @Query('projectId') projectId?: string): Promise<MainVersion> {
+    return this.versionService.getDetail(id, projectId);
   }
 
   @Get(':id/requirements')
@@ -51,22 +53,23 @@ export class VersionController {
     @Param('id') id: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<RequirementListResponse> {
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 20;
-    return this.versionService.getRequirements(id, pageNum, sizeNum);
+    return this.versionService.getRequirements(id, pageNum, sizeNum, projectId);
   }
 
   @Get(':id/summary')
-  async getSummary(@Param('id') id: string): Promise<VersionSummary> {
-    return this.versionService.getSummary(id);
+  async getSummary(@Param('id') id: string, @Query('projectId') projectId?: string): Promise<VersionSummary> {
+    return this.versionService.getSummary(id, projectId);
   }
 
   @NeedLogin()
   @Post()
-  async create(@Req() req: Request, @Body() dto: CreateVersionDto): Promise<MainVersion> {
+  async create(@Req() req: Request, @Body() dto: CreateVersionDto, @Query('projectId') projectId?: string): Promise<MainVersion> {
     const { userId } = req.userContext;
-    return this.versionService.create(dto, userId);
+    return this.versionService.create(dto, userId, projectId);
   }
 
   @NeedLogin()
@@ -75,13 +78,14 @@ export class VersionController {
     @Param('id') id: string,
     @Req() req: Request,
     @Body() dto: UpdateVersionDto,
+    @Query('projectId') projectId?: string,
   ): Promise<MainVersion> {
-    return this.versionService.update(id, dto, req.userContext.userId);
+    return this.versionService.update(id, dto, req.userContext.userId, projectId);
   }
 
   @NeedLogin()
   @Delete(':id')
-  async delete(@Param('id') id: string): Promise<void> {
-    return this.versionService.delete(id);
+  async delete(@Param('id') id: string, @Query('projectId') projectId?: string): Promise<void> {
+    return this.versionService.delete(id, projectId);
   }
 }

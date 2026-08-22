@@ -73,6 +73,7 @@ interface ListQuery {
   versionType?: string;
   priority?: string;
   keyword?: string;
+  projectId?: string;
 }
 
 @Injectable()
@@ -82,13 +83,15 @@ export class VersionService {
   ) {}
 
   async getList(query: ListQuery): Promise<VersionListResponse> {
-    const { page, pageSize, status, businessLine, versionType, priority, keyword } = query;
+    const { page, pageSize, status, businessLine, versionType, priority, keyword, projectId } = query;
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const conditions = [];
     if (status) conditions.push(eq(mainVersionManage.appStatus, status));
 
     if (versionType) conditions.push(eq(mainVersionManage.versionType, versionType));
     if (priority) conditions.push(eq(mainVersionManage.priority, priority));
     if (keyword) conditions.push(ilike(mainVersionManage.versionName, `%${keyword}%`));
+    if (projectId) conditions.push(eq(mainVersionManage.projectId, projectId));
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -109,18 +112,20 @@ export class VersionService {
     };
   }
 
-  async getDetail(id: string): Promise<MainVersion> {
+  async getDetail(id: string, projectId?: string): Promise<MainVersion> {
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const result = await this.db
       .select()
       .from(mainVersionManage)
-      .where(
+      .where(and(
         isValidUuid(id)
           ? or(eq(mainVersionManage.id, id), eq(mainVersionManage.baseRecordId, id))
           : or(
               eq(mainVersionManage.baseRecordId, id),
               eq(mainVersionManage.versionName, id),
             ),
-      )
+        projectId ? eq(mainVersionManage.projectId, projectId) : undefined,
+      ))
       .limit(1);
     if (result.length === 0) {
       throw new NotFoundException('版本不存在');
@@ -128,9 +133,12 @@ export class VersionService {
     return this.mapVersion(result[0]);
   }
 
-  async getRequirements(versionId: string, page: number, pageSize: number): Promise<RequirementListResponse> {
-    const version = await this.getDetail(versionId);
-    const where = eq(versionRequirement.planningVersion, version.baseRecordId || version.id);
+  async getRequirements(versionId: string, page: number, pageSize: number, projectId?: string): Promise<RequirementListResponse> {
+    const version = await this.getDetail(versionId, projectId);
+    const where = and(
+      eq(versionRequirement.planningVersion, version.baseRecordId || version.id),
+      projectId ? eq(versionRequirement.projectId, projectId) : undefined,
+    );
 
     const [itemsRes, totalRes] = await Promise.all([
       this.db
@@ -201,8 +209,8 @@ export class VersionService {
     };
   }
 
-  async getSummary(versionId: string): Promise<VersionSummary> {
-    const version = await this.getDetail(versionId);
+  async getSummary(versionId: string, projectId?: string): Promise<VersionSummary> {
+    const version = await this.getDetail(versionId, projectId);
     const versionRecordId = version.baseRecordId || version.id;
     const relatedRequirements = await this.db
       .select({
@@ -210,7 +218,7 @@ export class VersionService {
         baseRecordId: versionRequirement.baseRecordId,
       })
       .from(versionRequirement)
-      .where(eq(versionRequirement.planningVersion, versionRecordId));
+      .where(and(eq(versionRequirement.planningVersion, versionRecordId), projectId ? eq(versionRequirement.projectId, projectId) : undefined));
     const parentRequirementIds = [...new Set(
       relatedRequirements.flatMap((requirement) =>
         [requirement.id, requirement.baseRecordId].filter(
@@ -223,16 +231,17 @@ export class VersionService {
       this.db
         .select({ count: count() })
         .from(testPlan)
-        .where(
+        .where(and(
           or(
             sql`${testPlan.relatedVersion}::text LIKE '%' || ${versionRecordId} || '%'`,
             sql`${testPlan.relatedVersion}::text LIKE '%' || ${version.versionName} || '%'`,
           ),
-        ),
+          projectId ? eq(testPlan.projectId, projectId) : undefined,
+        )),
       this.db
         .select({ count: count() })
         .from(versionRequirement)
-        .where(eq(versionRequirement.planningVersion, versionRecordId)),
+        .where(and(eq(versionRequirement.planningVersion, versionRecordId), projectId ? eq(versionRequirement.projectId, projectId) : undefined)),
       parentRequirementIds.length === 0
         ? Promise.resolve([])
         : this.db
@@ -241,14 +250,15 @@ export class VersionService {
               count: count(),
             })
             .from(defectItem)
-            .where(
+            .where(and(
               or(...parentRequirementIds.map((requirementId) =>
                 sql`${defectItem.appParentOrder} -> 'link_record_ids'
                   @> jsonb_build_array(${requirementId}::text)`,
               )),
-            )
+              projectId ? eq(defectItem.projectId, projectId) : undefined,
+            ))
             .groupBy(defectItem.severity),
-      this.getClosureBlockers(version),
+      this.getClosureBlockers(version, projectId),
     ]);
 
     const defectBySeverity: DefectSeverityStat[] = defectRows.map((r) => ({
@@ -266,13 +276,14 @@ export class VersionService {
     };
   }
 
-  async create(dto: CreateVersionDto, userId: string): Promise<MainVersion> {
+  async create(dto: CreateVersionDto, userId: string, projectId?: string): Promise<MainVersion> {
     requireName(dto.versionName, '版本名称');
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const result = await this.db.execute(
       sql`INSERT INTO main_version_manage (
         base_record_id, version_name, app_status, priority, version_type, version_doc, version_risk,
         version_start_date, pack_time, expected_test_time, version_close_date,
-        actual_gray_date, actual_release_date, rollback_reason_and_process, _created_by, _updated_by
+        actual_gray_date, actual_release_date, rollback_reason_and_process, project_id, _created_by, _updated_by
       ) VALUES (
         gen_random_uuid()::text,
         ${dto.versionName}, ${dto.appStatus || null}, ${dto.priority || null},
@@ -283,21 +294,21 @@ export class VersionService {
         ${dto.versionCloseDate || null}::date,
         ${dto.actualGrayDate || null}::date,
         ${dto.actualReleaseDate || null}::date,
-        ${dto.rollbackReasonAndProcess || null},
+        ${dto.rollbackReasonAndProcess || null}, ${projectId},
         ${userId ? sql`ROW(${userId})::user_profile` : null},
         ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
-    return this.getDetail(rows[0].id);
+    return this.getDetail(rows[0].id, projectId);
   }
 
-  async update(id: string, dto: UpdateVersionDto, userId: string): Promise<MainVersion> {
-    const version = await this.getDetail(id);
+  async update(id: string, dto: UpdateVersionDto, userId: string, projectId?: string): Promise<MainVersion> {
+    const version = await this.getDetail(id, projectId);
     if (dto.versionName !== undefined) requireName(dto.versionName, '版本名称');
     const isClosing = dto.appStatus !== undefined && ['已结束', '已关闭'].includes(dto.appStatus);
     if (isClosing || Boolean(dto.actualReleaseDate)) {
-      const blockers = await this.getClosureBlockers(version);
+      const blockers = await this.getClosureBlockers(version, projectId);
       if (blockers.length > 0) {
         throw new BadRequestException(`版本尚未满足关闭条件：${blockers.join('；')}`);
       }
@@ -338,10 +349,10 @@ export class VersionService {
     if (rows.length === 0) {
       throw new ConflictException('版本已被其他人修改，请刷新后重试');
     }
-    return this.getDetail(rows[0].id);
+    return this.getDetail(rows[0].id, projectId);
   }
 
-  private async getClosureBlockers(version: MainVersion): Promise<string[]> {
+  private async getClosureBlockers(version: MainVersion, projectId?: string): Promise<string[]> {
     const versionRecordId = version.baseRecordId || version.id;
     const relatedRequirements = await this.db
       .select({
@@ -349,7 +360,7 @@ export class VersionService {
         baseRecordId: versionRequirement.baseRecordId,
       })
       .from(versionRequirement)
-      .where(eq(versionRequirement.planningVersion, versionRecordId));
+      .where(and(eq(versionRequirement.planningVersion, versionRecordId), projectId ? eq(versionRequirement.projectId, projectId) : undefined));
     const parentRequirementIds = [...new Set(
       relatedRequirements.flatMap((requirement) =>
         [requirement.id, requirement.baseRecordId].filter(
@@ -368,32 +379,35 @@ export class VersionService {
               appExpectedEndDate: subRequirementItem.appExpectedEndDate,
             })
             .from(subRequirementItem)
-            .where(
+            .where(and(
               or(...parentRequirementIds.map((requirementId) =>
                 sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
                   @> jsonb_build_array(${requirementId}::text)`,
               )),
-            ),
+              projectId ? eq(subRequirementItem.projectId, projectId) : undefined,
+            )),
       this.db
         .select({ testStatus: testPlan.testStatus })
         .from(testPlan)
-        .where(
+        .where(and(
           or(
             sql`${testPlan.relatedVersion}::text LIKE '%' || ${versionRecordId} || '%'`,
             sql`${testPlan.relatedVersion}::text LIKE '%' || ${version.versionName} || '%'`,
           ),
-        ),
+          projectId ? eq(testPlan.projectId, projectId) : undefined,
+        )),
       parentRequirementIds.length === 0
         ? Promise.resolve([])
         : this.db
             .select({ status: defectItem.status })
             .from(defectItem)
-            .where(
+            .where(and(
               or(...parentRequirementIds.map((requirementId) =>
                 sql`${defectItem.appParentOrder} -> 'link_record_ids'
                   @> jsonb_build_array(${requirementId}::text)`,
               )),
-            ),
+              projectId ? eq(defectItem.projectId, projectId) : undefined,
+            )),
     ]);
 
     const subItemsByParent = new Map<string, typeof subItems>();
@@ -420,19 +434,19 @@ export class VersionService {
     ].filter(Boolean);
   }
 
-  async delete(id: string): Promise<void> {
-    const version = await this.getDetail(id);
+  async delete(id: string, projectId?: string): Promise<void> {
+    const version = await this.getDetail(id, projectId);
     const versionRecordIds = [version.id, version.baseRecordId].filter(Boolean);
     const [requirements, plans] = await Promise.all([
       this.db
         .select({ id: versionRequirement.id })
         .from(versionRequirement)
-        .where(inArray(versionRequirement.planningVersion, versionRecordIds))
+        .where(and(inArray(versionRequirement.planningVersion, versionRecordIds), projectId ? eq(versionRequirement.projectId, projectId) : undefined))
         .limit(1),
       this.db
         .select({ id: testPlan.id })
         .from(testPlan)
-        .where(
+        .where(and(
           or(
             ...versionRecordIds.map(
               (recordId) =>
@@ -441,7 +455,8 @@ export class VersionService {
                 ) OR ${testPlan.relatedVersion}::text LIKE '%' || ${recordId} || '%'`,
             ),
           ),
-        )
+          projectId ? eq(testPlan.projectId, projectId) : undefined,
+        ))
         .limit(1),
     ]);
     if (requirements.length > 0 || plans.length > 0) {

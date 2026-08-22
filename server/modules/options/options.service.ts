@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { sql } from 'drizzle-orm';
 
@@ -35,14 +35,20 @@ export class OptionsService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
   ) {}
 
-  async getDistinct(field: string): Promise<FieldOptions> {
+  async getDistinct(field: string, projectId?: string): Promise<FieldOptions> {
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const config = FIELD_MAP[field];
     if (!config) {
       return { field, values: [] };
     }
 
     const result = await this.db.execute<{ val: string }>(
-      sql`SELECT DISTINCT ${sql.raw(config.column)} as val FROM ${sql.raw(config.table)} WHERE ${sql.raw(config.column)} IS NOT NULL AND ${sql.raw(config.column)} != '' ORDER BY ${sql.raw(config.column)}`,
+      sql`SELECT DISTINCT ${sql.raw(config.column)} as val
+        FROM ${sql.raw(config.table)}
+        WHERE ${sql.raw(config.column)} IS NOT NULL
+          AND ${sql.raw(config.column)} != ''
+          AND (${projectId || null}::text IS NULL OR project_id = ${projectId || null})
+        ORDER BY ${sql.raw(config.column)}`,
     );
 
     const rows = result as unknown as { val: string }[];
@@ -52,10 +58,13 @@ export class OptionsService {
     };
   }
 
-  async getAllOptions(): Promise<Record<string, string[]>> {
+  async getAllOptions(projectId?: string): Promise<Record<string, string[]>> {
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const fields = Object.keys(FIELD_MAP);
 
-    const results = await Promise.all(fields.map((f: string) => this.getDistinct(f)));
+    const results = await Promise.all(
+      fields.map((f: string) => this.getDistinct(f, projectId)),
+    );
     const map: Record<string, string[]> = {};
     for (const r of results) {
       map[r.field] = r.values;

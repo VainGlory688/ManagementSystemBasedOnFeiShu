@@ -11,10 +11,24 @@ import './index.css';
 import { createPortal } from 'react-dom';
 import { Toaster } from '@client/src/components/ui/sonner';
 import { applyTheme, getStoredTheme } from '@/lib/theme';
+import { axiosForBackend } from '@lark-apaas/client-toolkit/utils/getAxiosForBackend';
+import { getCurrentProjectId } from '@/components/ProjectScope';
 
 const CLIENT_BASE_PATH = process.env.CLIENT_BASE_PATH || '/';
 
 applyTheme(getStoredTheme());
+
+axiosForBackend.interceptors.request.use((config) => {
+  const projectId = getCurrentProjectId();
+  if (!projectId || !config.url?.startsWith('/api/') || config.url.startsWith('/api/projects')) {
+    return config;
+  }
+  const [path, query = ''] = config.url.split('?');
+  const params = new URLSearchParams(query);
+  params.set('projectId', projectId);
+  config.url = `${path}?${params.toString()}`;
+  return config;
+});
 
 const MainApp = () => {
   return (

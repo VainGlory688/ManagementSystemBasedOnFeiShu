@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { asc, count, desc, inArray, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import {
   versionRequirement,
   defectItem,
@@ -81,14 +81,23 @@ export class WorkbenchService {
     private readonly requirementService: RequirementService,
   ) {}
 
-  async getOverview(userId: string): Promise<WorkbenchOverview> {
+  async getOverview(userId: string, projectId?: string): Promise<WorkbenchOverview> {
     const [reqCount, defectCount, testCount] = await Promise.all([
       this.db.select({ count: count() }).from(versionRequirement)
-        .where(sql`(${versionRequirement.currentOwner}).user_id = ${userId}`),
+        .where(and(
+          sql`(${versionRequirement.currentOwner}).user_id = ${userId}`,
+          projectId ? eq(versionRequirement.projectId, projectId) : undefined,
+        )),
       this.db.select({ count: count() }).from(defectItem)
-        .where(sql`${userId} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${defectItem.currentOwner}) u))`),
+        .where(and(
+          sql`${userId} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${defectItem.currentOwner}) u))`,
+          projectId ? eq(defectItem.projectId, projectId) : undefined,
+        )),
       this.db.select({ count: count() }).from(testPlan)
-        .where(sql`${userId} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${testPlan.executor}) u))`),
+        .where(and(
+          sql`${userId} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${testPlan.executor}) u))`,
+          projectId ? eq(testPlan.projectId, projectId) : undefined,
+        )),
     ]);
     return {
       myRequirementCount: Number(reqCount[0]?.count ?? 0),
@@ -103,8 +112,12 @@ export class WorkbenchService {
     pageSize: number,
     sort?: 'priority',
     status?: string,
+    projectId?: string,
   ): Promise<MyRequirementListResponse> {
-    const where = sql`(${versionRequirement.currentOwner}).user_id = ${userId}`;
+    const where = and(
+      sql`(${versionRequirement.currentOwner}).user_id = ${userId}`,
+      projectId ? eq(versionRequirement.projectId, projectId) : undefined,
+    );
     const orderBy = sort === 'priority'
       ? sql`CASE ${versionRequirement.priority} WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN '待定' THEN 3 WHEN '历史遗留' THEN 4 ELSE 5 END`
       : desc(versionRequirement.updatedAt);
@@ -127,12 +140,13 @@ export class WorkbenchService {
             appExpectedEndDate: subRequirementItem.appExpectedEndDate,
           })
           .from(subRequirementItem)
-          .where(
+          .where(and(
             or(...parentIds.map((parentId) =>
               sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
                 @> jsonb_build_array(${parentId}::text)`,
             )),
-          );
+            projectId ? eq(subRequirementItem.projectId, projectId) : undefined,
+          ));
     const subItemsByParent = new Map<string, typeof subItems>();
     for (const item of subItems) {
       for (const parentId of extractParentRecordIds(item.appParentWorkItem)) {
@@ -163,7 +177,10 @@ export class WorkbenchService {
             versionName: mainVersionManage.versionName,
           })
           .from(mainVersionManage)
-          .where(inArray(mainVersionManage.baseRecordId, versionIds));
+          .where(and(
+            inArray(mainVersionManage.baseRecordId, versionIds),
+            projectId ? eq(mainVersionManage.projectId, projectId) : undefined,
+          ));
     const versionNames = new Map<string, string>();
     for (const version of versions) {
       versionNames.set(version.id, version.versionName || '');
@@ -192,11 +209,14 @@ export class WorkbenchService {
     pageSize: number,
     sort?: 'priority',
     status?: string,
+    projectId?: string,
   ): Promise<MyDefectListResponse> {
     const ownerWhere = sql`${userId} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${defectItem.currentOwner}) u))`;
-    const where = status
-      ? sql`${ownerWhere} AND ${defectItem.status} = ${status}`
-      : ownerWhere;
+    const where = and(
+      ownerWhere,
+      status ? eq(defectItem.status, status) : undefined,
+      projectId ? eq(defectItem.projectId, projectId) : undefined,
+    );
     const orderBy = sort === 'priority'
       ? sql`CASE ${defectItem.priority} WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN '待定' THEN 3 WHEN '历史遗留' THEN 4 ELSE 5 END`
       : desc(defectItem.updatedAt);
@@ -225,7 +245,7 @@ export class WorkbenchService {
             planningVersion: versionRequirement.planningVersion,
           })
           .from(versionRequirement)
-          .where(
+          .where(and(
             localParentRequirementIds.length > 0
               ? or(
                   inArray(versionRequirement.id, localParentRequirementIds),
@@ -236,7 +256,8 @@ export class WorkbenchService {
                   inArray(versionRequirement.baseRecordId, parentRequirementIds),
                   inArray(versionRequirement.appReqName, parentRequirementIds),
                 ),
-          );
+            projectId ? eq(versionRequirement.projectId, projectId) : undefined,
+          ));
     const requirementsByIdentifier = new Map<string, (typeof requirementRows)[number]>();
     const requirementsByName = new Map<string, (typeof requirementRows)[number]>();
     const ambiguousNames = new Set<string>();
@@ -269,14 +290,15 @@ export class WorkbenchService {
             versionName: mainVersionManage.versionName,
           })
           .from(mainVersionManage)
-          .where(
+          .where(and(
             localVersionIds.length > 0
               ? or(
                   inArray(mainVersionManage.id, localVersionIds),
                   inArray(mainVersionManage.baseRecordId, versionIds),
                 )
               : inArray(mainVersionManage.baseRecordId, versionIds),
-          );
+            projectId ? eq(mainVersionManage.projectId, projectId) : undefined,
+          ));
     const versionNames = new Map<string, string>();
     for (const version of versionRecords) {
       if (version.baseRecordId) versionNames.set(version.baseRecordId, version.versionName || '');
@@ -305,8 +327,12 @@ export class WorkbenchService {
     userId: string,
     page: number,
     pageSize: number,
+    projectId?: string,
   ): Promise<MyTestPlanListResponse> {
-    const where = sql`${userId} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${testPlan.executor}) u))`;
+    const where = and(
+      sql`${userId} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${testPlan.executor}) u))`,
+      projectId ? eq(testPlan.projectId, projectId) : undefined,
+    );
     const [itemsRes, totalRes] = await Promise.all([
       this.db
         .select()
@@ -329,7 +355,10 @@ export class WorkbenchService {
             versionName: mainVersionManage.versionName,
           })
           .from(mainVersionManage)
-          .where(inArray(mainVersionManage.baseRecordId, relatedVersionIds));
+          .where(and(
+            inArray(mainVersionManage.baseRecordId, relatedVersionIds),
+            projectId ? eq(mainVersionManage.projectId, projectId) : undefined,
+          ));
     const versionNames = new Map<string, string>();
     for (const version of versions) {
       versionNames.set(version.id, version.versionName || '');
@@ -353,12 +382,30 @@ export class WorkbenchService {
     };
   }
 
-  async getMyVersions(userId: string, page: number, pageSize: number, sort?: 'name'): Promise<MyVersionListResponse> {
+  async getMyVersions(
+    userId: string,
+    page: number,
+    pageSize: number,
+    sort?: 'name',
+    projectId?: string,
+  ): Promise<MyVersionListResponse> {
     const ownerWhere = sql`(${versionRequirement.currentOwner}).user_id = ${userId}`;
     const executorWhere = sql`${userId} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${testPlan.executor}) u))`;
     const [requirements, testPlans] = await Promise.all([
-      this.db.select({ planningVersion: versionRequirement.planningVersion }).from(versionRequirement).where(ownerWhere),
-      this.db.select({ relatedVersion: testPlan.relatedVersion }).from(testPlan).where(executorWhere),
+      this.db
+        .select({ planningVersion: versionRequirement.planningVersion })
+        .from(versionRequirement)
+        .where(and(
+          ownerWhere,
+          projectId ? eq(versionRequirement.projectId, projectId) : undefined,
+        )),
+      this.db
+        .select({ relatedVersion: testPlan.relatedVersion })
+        .from(testPlan)
+        .where(and(
+          executorWhere,
+          projectId ? eq(testPlan.projectId, projectId) : undefined,
+        )),
     ]);
     const versionIds = [...new Set([
       ...requirements.map((item) => item.planningVersion).filter((id): id is string => Boolean(id)),
@@ -368,7 +415,8 @@ export class WorkbenchService {
       ? []
       : await this.db
           .select()
-          .from(mainVersionManage);
+          .from(mainVersionManage)
+          .where(projectId ? eq(mainVersionManage.projectId, projectId) : undefined);
     const relatedVersionIds = new Set(versionIds);
     const allItems = versionRecords.filter((version) => (
       relatedVersionIds.has(version.id)
@@ -398,13 +446,20 @@ export class WorkbenchService {
     userId: string,
     page: number,
     pageSize: number,
+    projectId?: string,
   ): Promise<MyBlockedSubRequirementListResponse> {
-    const requirements = await this.db.select().from(versionRequirement);
+    const requirements = await this.db
+      .select()
+      .from(versionRequirement)
+      .where(projectId ? eq(versionRequirement.projectId, projectId) : undefined);
     const parentIds = new Set(requirements.flatMap((requirement) =>
       [requirement.id, requirement.baseRecordId].filter(
         (id): id is string => Boolean(id),
       )));
-    const subItems = (await this.db.select().from(subRequirementItem))
+    const subItems = (await this.db
+      .select()
+      .from(subRequirementItem)
+      .where(projectId ? eq(subRequirementItem.projectId, projectId) : undefined))
       .filter((item) =>
         extractParentRecordIds(item.appParentWorkItem)
           .some((parentId) => parentIds.has(parentId)));

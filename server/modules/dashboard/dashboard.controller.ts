@@ -18,34 +18,40 @@ export class DashboardController {
   ) {}
 
   @Get('kpis')
-  async getKpis(@Query('planningVersion') planningVersion?: string): Promise<DashboardKpis> {
-    return this.dashboardService.getKpis(planningVersion);
+  async getKpis(
+    @Query('planningVersion') planningVersion?: string,
+    @Query('projectId') projectId?: string,
+  ): Promise<DashboardKpis> {
+    return this.dashboardService.getKpis(planningVersion, projectId);
   }
 
   @Get('defect-severity')
   async getDefectSeverity(
     @Query('planningVersion') planningVersion?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<DefectSeverityResponse> {
-    return this.dashboardService.getDefectSeverity(planningVersion);
+    return this.dashboardService.getDefectSeverity(planningVersion, projectId);
   }
 
   @Get('business-line-stats')
   async getBusinessLineStats(
     @Query('planningVersion') planningVersion?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<BusinessLineStatsResponse> {
-    return this.dashboardService.getBusinessLineStats(planningVersion);
+    return this.dashboardService.getBusinessLineStats(planningVersion, projectId);
   }
 
   @Get('version-status')
-  async getVersionStatus(): Promise<VersionStatusResponse> {
-    return this.dashboardService.getVersionStatus();
+  async getVersionStatus(@Query('projectId') projectId?: string): Promise<VersionStatusResponse> {
+    return this.dashboardService.getVersionStatus(projectId);
   }
 
   @Get('recent-activities')
   async getRecentActivities(
     @Query('limit') limit?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<RecentActivitiesResponse> {
     const limitNum = limit ? parseInt(limit, 10) : 10;
-    return this.dashboardService.getRecentActivities(limitNum);
+    return this.dashboardService.getRecentActivities(limitNum, projectId);
   }
 }

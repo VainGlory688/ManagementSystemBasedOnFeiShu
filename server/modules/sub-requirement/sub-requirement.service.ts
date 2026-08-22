@@ -27,6 +27,7 @@ interface ListQuery {
   keyword?: string;
   appStatus?: string;
   appPriority?: string;
+  projectId?: string;
 }
 
 type DatabaseExecutor = Pick<PostgresJsDatabase, 'select' | 'execute'>;
@@ -68,11 +69,13 @@ export class SubRequirementService {
   ) {}
 
   async getList(query: ListQuery): Promise<SubRequirementListResponse> {
-    const { page, pageSize, keyword, appStatus, appPriority } = query;
+    const { page, pageSize, keyword, appStatus, appPriority, projectId } = query;
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const conditions = [];
     if (appStatus) conditions.push(eq(subRequirementItem.appStatus, appStatus));
     if (appPriority) conditions.push(eq(subRequirementItem.appPriority, appPriority));
     if (keyword) conditions.push(ilike(subRequirementItem.appSubRequirementName, `%${keyword}%`));
+    if (projectId) conditions.push(eq(subRequirementItem.projectId, projectId));
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -101,7 +104,10 @@ export class SubRequirementService {
           appReqName: versionRequirement.appReqName,
         })
         .from(versionRequirement)
-        .where(inArray(versionRequirement.baseRecordId, allParentIds));
+        .where(and(
+          inArray(versionRequirement.baseRecordId, allParentIds),
+          projectId ? eq(versionRequirement.projectId, projectId) : undefined,
+        ));
       nameMap = new Map(
         reqs.map((r) => [r.baseRecordId, r.appReqName || '']),
       );
@@ -126,14 +132,18 @@ export class SubRequirementService {
     };
   }
 
-  async getDetail(id: string): Promise<SubRequirementItem> {
+  async getDetail(id: string, projectId?: string): Promise<SubRequirementItem> {
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const result = await this.db
       .select()
       .from(subRequirementItem)
       .where(
+        and(
         isValidUuid(id)
           ? or(eq(subRequirementItem.id, id), eq(subRequirementItem.baseRecordId, id))
           : eq(subRequirementItem.baseRecordId, id),
+        eq(subRequirementItem.projectId, projectId),
+        )
       )
       .limit(1);
     if (result.length === 0) {
@@ -148,14 +158,15 @@ export class SubRequirementService {
       const reqs = await this.db
         .select({ appReqName: versionRequirement.appReqName })
         .from(versionRequirement)
-        .where(
+        .where(and(
           isValidUuid(parentIds[0])
             ? or(
                 eq(versionRequirement.id, parentIds[0]),
                 eq(versionRequirement.baseRecordId, parentIds[0]),
               )
-            : eq(versionRequirement.baseRecordId, parentIds[0]),
-        )
+          : eq(versionRequirement.baseRecordId, parentIds[0]),
+          eq(versionRequirement.projectId, projectId),
+        ))
         .limit(1);
       if (reqs.length > 0) {
         item.appParentWorkItemName = reqs[0].appReqName || undefined;
@@ -164,19 +175,26 @@ export class SubRequirementService {
     return item;
   }
 
-  async create(dto: CreateSubRequirementDto, userId: string): Promise<SubRequirementItem> {
+  async create(
+    dto: CreateSubRequirementDto,
+    userId: string,
+    projectId?: string,
+  ): Promise<SubRequirementItem> {
     if (!dto.appSubRequirementName?.trim()) {
       throw new BadRequestException('子需求名称不能为空');
     }
+    if (!projectId) {
+      throw new BadRequestException('缺少当前项目');
+    }
     const parent = dto.appParentWorkItem
-      ? await this.findParentRequirement(dto.appParentWorkItem)
+      ? await this.findParentRequirement(dto.appParentWorkItem, this.db, true, projectId)
       : undefined;
     const rows = await this.db.transaction(async (tx) => {
       const result = await tx.execute(
       sql`INSERT INTO sub_requirement_item (
         app_sub_requirement_name, app_status, app_current_owner,
         app_expected_start_date, app_expected_end_date,
-        app_priority, app_parent_work_item, app_details, _created_by, _updated_by
+        app_priority, app_parent_work_item, app_details, project_id, _created_by, _updated_by
       ) VALUES (
         ${dto.appSubRequirementName},
         ${dto.appStatus || null},
@@ -186,6 +204,7 @@ export class SubRequirementService {
         ${dto.appPriority || null},
         ${parent ? sql`jsonb_build_object('link_record_ids', jsonb_build_array(${parent.baseRecordId || parent.id}::text))` : sql`jsonb_build_object('link_record_ids', '[]'::jsonb)`},
         ${dto.appDetails || null},
+        ${projectId},
         ${userId ? sql`ROW(${userId})::user_profile` : null},
         ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
@@ -201,18 +220,18 @@ export class SubRequirementService {
       }
       return createdRows;
     });
-    return this.getDetail(rows[0].id);
+    return this.getDetail(rows[0].id, projectId);
   }
 
-  async update(id: string, dto: UpdateSubRequirementDto, userId: string): Promise<SubRequirementItem> {
-    const existing = await this.findSubRequirement(id);
+  async update(id: string, dto: UpdateSubRequirementDto, userId: string, projectId?: string): Promise<SubRequirementItem> {
+    const existing = await this.findSubRequirement(id, projectId);
     if (dto.appSubRequirementName !== undefined && !dto.appSubRequirementName.trim()) {
       throw new BadRequestException('子需求名称不能为空');
     }
     const currentParentIds = extractParentRecordIds(existing.appParentWorkItem);
     const nextParent = dto.appParentWorkItem === undefined || !dto.appParentWorkItem
       ? undefined
-      : await this.findParentRequirement(dto.appParentWorkItem);
+      : await this.findParentRequirement(dto.appParentWorkItem, this.db, true, projectId);
     if (
       dto.appStatus !== undefined
       && isCompletedPipelineStatus(dto.appStatus)
@@ -242,7 +261,7 @@ export class SubRequirementService {
     if (dto.appDetails !== undefined) setParts.push(sql`app_details = ${dto.appDetails || null}`);
 
     if (setParts.length === 0) {
-      return this.getDetail(existing.id);
+      return this.getDetail(existing.id, projectId);
     }
     setParts.push(sql`_updated_by = ${userId ? sql`ROW(${userId})::user_profile` : null}`);
     setParts.push(sql`_updated_at = now()`);
@@ -272,7 +291,7 @@ export class SubRequirementService {
       }
       if (dto.appParentWorkItem !== undefined) {
         for (const parentId of currentParentIds) {
-          const parent = await this.findParentRequirement(parentId, tx, false);
+          const parent = await this.findParentRequirement(parentId, tx, false, projectId);
           if (parent && parent.id !== nextParent?.id) {
             await this.removeFromParentRequirement(
               parent.id,
@@ -285,15 +304,15 @@ export class SubRequirementService {
         }
       }
     });
-    return this.getDetail(existing.id);
+    return this.getDetail(existing.id, projectId);
   }
 
-  async delete(id: string, userId: string): Promise<void> {
-    const item = await this.findSubRequirement(id);
+  async delete(id: string, userId: string, projectId?: string): Promise<void> {
+    const item = await this.findSubRequirement(id, projectId);
     const subRequirementRecordId = item.baseRecordId || item.id;
     await this.db.transaction(async (tx) => {
       for (const parentId of extractParentRecordIds(item.appParentWorkItem)) {
-        const parent = await this.findParentRequirement(parentId, tx, false);
+        const parent = await this.findParentRequirement(parentId, tx, false, projectId);
         if (parent) {
           await this.removeFromParentRequirement(
             parent.id,
@@ -331,14 +350,18 @@ export class SubRequirementService {
     };
   }
 
-  private async findSubRequirement(id: string) {
+  private async findSubRequirement(id: string, projectId?: string) {
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const items = await this.db
       .select()
       .from(subRequirementItem)
       .where(
+        and(
         isValidUuid(id)
           ? or(eq(subRequirementItem.id, id), eq(subRequirementItem.baseRecordId, id))
           : eq(subRequirementItem.baseRecordId, id),
+        eq(subRequirementItem.projectId, projectId),
+        )
       )
       .limit(1);
     if (!items[0]) {
@@ -351,6 +374,7 @@ export class SubRequirementService {
     parentId: string,
     db: DatabaseExecutor = this.db,
     required = true,
+    projectId?: string,
   ) {
     const parents = await db
       .select({
@@ -358,14 +382,15 @@ export class SubRequirementService {
         baseRecordId: versionRequirement.baseRecordId,
       })
       .from(versionRequirement)
-      .where(
+      .where(and(
         isValidUuid(parentId)
           ? or(
               eq(versionRequirement.id, parentId),
               eq(versionRequirement.baseRecordId, parentId),
             )
           : eq(versionRequirement.baseRecordId, parentId),
-      )
+        projectId ? eq(versionRequirement.projectId, projectId) : undefined,
+      ))
       .limit(1);
     if (!parents[0] && required) {
       throw new NotFoundException('父需求不存在');

@@ -30,6 +30,7 @@ export class DefectController {
     @Query('planningVersion') planningVersion?: string,
     @Query('currentOwner') currentOwner?: string,
     @Query('keyword') keyword?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<DefectListResponse> {
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 20;
@@ -45,19 +46,24 @@ export class DefectController {
       planningVersion,
       currentOwner: currentOwner === 'me' ? req.userContext?.userId || '' : currentOwner,
       keyword,
+      projectId,
     });
   }
 
   @Get(':id')
-  async getDetail(@Param('id') id: string): Promise<DefectItem> {
-    return this.defectService.getDetail(id);
+  async getDetail(@Param('id') id: string, @Query('projectId') projectId?: string): Promise<DefectItem> {
+    return this.defectService.getDetail(id, projectId);
   }
 
   @NeedLogin()
   @Post()
-  async create(@Req() req: Request, @Body() dto: CreateDefectDto): Promise<DefectItem> {
+  async create(
+    @Req() req: Request,
+    @Body() dto: CreateDefectDto,
+    @Query('projectId') projectId?: string,
+  ): Promise<DefectItem> {
     const { userId } = req.userContext;
-    return this.defectService.create(dto, userId);
+    return this.defectService.create(dto, userId, projectId);
   }
 
   @NeedLogin()
@@ -66,13 +72,14 @@ export class DefectController {
     @Param('id') id: string,
     @Req() req: Request,
     @Body() dto: UpdateDefectDto,
+    @Query('projectId') projectId?: string,
   ): Promise<DefectItem> {
-    return this.defectService.update(id, dto, req.userContext.userId);
+    return this.defectService.update(id, dto, req.userContext.userId, projectId);
   }
 
   @NeedLogin()
   @Delete(':id')
-  async delete(@Param('id') id: string): Promise<void> {
-    return this.defectService.delete(id);
+  async delete(@Param('id') id: string, @Query('projectId') projectId?: string): Promise<void> {
+    return this.defectService.delete(id, projectId);
   }
 }

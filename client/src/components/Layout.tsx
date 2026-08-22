@@ -1,4 +1,4 @@
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMemo } from "react";
 import {
   LayoutDashboard,
@@ -11,6 +11,7 @@ import {
   ChevronsRight,
   GanttChart,
   TriangleAlert,
+  LogOut,
 } from "lucide-react";
 
 import {
@@ -54,11 +55,14 @@ const navItems: NavItem[] = [
 
 const LayoutContent = () => {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const { projectId } = useParams<{ projectId: string }>();
+  const projectBasePath = `/projects/${projectId}`;
 
   const activeTitle = useMemo(() => {
     const matched = navItems.find((item: NavItem) => {
-      if (item.path === "/") return pathname === "/";
-      return pathname.startsWith(item.path);
+      const targetPath = item.path === "/" ? `${projectBasePath}/dashboard` : `${projectBasePath}${item.path}`;
+      return pathname === targetPath || pathname.startsWith(`${targetPath}/`);
     });
     return matched?.label || "项目管理";
   }, [pathname]);
@@ -70,7 +74,7 @@ const LayoutContent = () => {
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" asChild>
-                <Link to="/">
+                <Link to="dashboard">
                   <div className="flex aspect-square size-8 items-center justify-center rounded-sm bg-primary text-primary-foreground">
                     <Gamepad2 className="size-4" />
                   </div>
@@ -92,12 +96,13 @@ const LayoutContent = () => {
                   const Icon = item.icon;
                   const isActive =
                     item.path === "/"
-                      ? pathname === "/"
-                      : pathname.startsWith(item.path);
+                      ? pathname === `${projectBasePath}/dashboard`
+                      : pathname === `${projectBasePath}${item.path}`
+                        || pathname.startsWith(`${projectBasePath}${item.path}/`);
                   return (
                     <SidebarMenuItem key={item.path}>
                       <SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
-                        <Link to={item.path}>
+                        <Link to={item.path === "/" ? "dashboard" : item.path.slice(1)}>
                           <Icon className="size-4" />
                           <span>{item.label}</span>
                         </Link>
@@ -135,6 +140,18 @@ const LayoutContent = () => {
           </Breadcrumb>
           <GlobalSearch />
           <ThemeSelector />
+          <button
+            type="button"
+            onClick={() => {
+              window.localStorage.removeItem('current-project-id');
+              navigate('/projects');
+            }}
+            className="inline-flex h-8 items-center gap-1 border border-border px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title="退出当前项目并返回项目入口"
+          >
+            <span className="font-mono text-primary">{projectId}</span>
+            <LogOut className="size-3.5" />
+          </button>
         </header>
         <div className="flex-1 overflow-y-auto overflow-x-clip [scrollbar-width:none] [&::-webkit-scrollbar]:hidden min-h-0">
           <Outlet />

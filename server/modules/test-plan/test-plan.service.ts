@@ -34,6 +34,7 @@ interface ListQuery {
   planningVersion?: string;
   executor?: string;
   keyword?: string;
+  projectId?: string;
 }
 
 function requireName(value: unknown, field: string): void {
@@ -49,7 +50,8 @@ export class TestPlanService {
   ) {}
 
   async getList(query: ListQuery): Promise<TestPlanListResponse> {
-    const { page, pageSize, testStatus, priority, testPlanType, businessLine, planningVersion, executor, keyword } = query;
+    const { page, pageSize, testStatus, priority, testPlanType, businessLine, planningVersion, executor, keyword, projectId } = query;
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const conditions = [];
     if (testStatus) conditions.push(eq(testPlan.testStatus, testStatus));
     if (priority) conditions.push(eq(testPlan.priority, priority));
@@ -58,6 +60,7 @@ export class TestPlanService {
     if (planningVersion) conditions.push(sql`${testPlan.relatedVersion}::text LIKE '%' || ${planningVersion} || '%'`);
     if (executor) conditions.push(sql`${executor} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${testPlan.executor}) u))`);
     if (keyword) conditions.push(ilike(testPlan.planName, `%${keyword}%`));
+    if (projectId) conditions.push(eq(testPlan.projectId, projectId));
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -90,7 +93,7 @@ export class TestPlanService {
           versionName: mainVersionManage.versionName,
         })
         .from(mainVersionManage)
-        .where(
+          .where(and(
           localVersionIds.length > 0
             ? or(
                 inArray(mainVersionManage.baseRecordId, toLookup),
@@ -101,7 +104,8 @@ export class TestPlanService {
                 inArray(mainVersionManage.baseRecordId, toLookup),
                 inArray(mainVersionManage.versionName, toLookup),
               ),
-        );
+            projectId ? eq(mainVersionManage.projectId, projectId) : undefined,
+          ));
       for (const v of versions) {
         versionIds.set(v.id, v.versionName || '');
         if (v.baseRecordId) versionIds.set(v.baseRecordId, v.versionName || '');
@@ -119,14 +123,18 @@ export class TestPlanService {
     };
   }
 
-  async getDetail(id: string): Promise<TestPlan> {
+  async getDetail(id: string, projectId?: string): Promise<TestPlan> {
+    if (!projectId) throw new BadRequestException('缺少当前项目');
     const result = await this.db
       .select()
       .from(testPlan)
       .where(
+        and(
         isValidUuid(id)
           ? or(eq(testPlan.id, id), eq(testPlan.baseRecordId, id))
           : eq(testPlan.baseRecordId, id),
+        eq(testPlan.projectId, projectId),
+        )
       )
       .limit(1);
     if (result.length === 0) {
@@ -137,7 +145,7 @@ export class TestPlanService {
       const versions = await this.db
         .select({ versionName: mainVersionManage.versionName })
         .from(mainVersionManage)
-        .where(
+          .where(and(
           isValidUuid(plan.relatedVersion)
             ? or(
                 eq(mainVersionManage.id, plan.relatedVersion),
@@ -147,7 +155,8 @@ export class TestPlanService {
                 eq(mainVersionManage.baseRecordId, plan.relatedVersion),
                 eq(mainVersionManage.versionName, plan.relatedVersion),
               ),
-        )
+            eq(mainVersionManage.projectId, projectId),
+          ))
         .limit(1);
       if (versions.length > 0) {
         plan.relatedVersionName = versions[0].versionName || '';
@@ -156,15 +165,23 @@ export class TestPlanService {
     return plan;
   }
 
-  async create(dto: CreateTestPlanDto, userId: string): Promise<TestPlan> {
+  async create(
+    dto: CreateTestPlanDto,
+    userId: string,
+    projectId?: string,
+  ): Promise<TestPlan> {
     requireName(dto.planName, '测试计划名称');
+    if (!projectId) {
+      throw new BadRequestException('缺少当前项目');
+    }
     const executorProfiles = dto.executor && dto.executor.length > 0
       ? sql`ARRAY[${sql.join(dto.executor.map((id: string) => sql`ROW(${id})::user_profile`), sql`, `)}]::user_profile[]`
       : null;
+    const relatedVersion = await this.resolveRelatedVersion(dto.relatedVersion, projectId);
     const result = await this.db.execute(
       sql`INSERT INTO test_plan (
         plan_name, test_status, priority, test_plan_type, business_line,
-        executor, expected_start_date, expected_end_date, related_version, _created_by, _updated_by
+        executor, expected_start_date, expected_end_date, related_version, project_id, _created_by, _updated_by
       ) VALUES (
         ${dto.planName},
         ${dto.testStatus || null},
@@ -174,21 +191,22 @@ export class TestPlanService {
         ${executorProfiles},
         ${dto.expectedStartDate || null}::date,
         ${dto.expectedEndDate || null}::date,
-        ${dto.relatedVersion
+        ${relatedVersion
           ? sql`jsonb_build_object(
-              'link_record_ids', jsonb_build_array(CAST(${dto.relatedVersion} AS text))
+              'link_record_ids', jsonb_build_array(CAST(${relatedVersion} AS text))
             )`
           : null},
+        ${projectId},
         ${userId ? sql`ROW(${userId})::user_profile` : null},
         ${userId ? sql`ROW(${userId})::user_profile` : null}
       ) RETURNING id`
     );
     const rows = result as unknown as { id: string }[];
-    return this.getDetail(rows[0].id);
+    return this.getDetail(rows[0].id, projectId);
   }
 
-  async update(id: string, dto: UpdateTestPlanDto, userId: string): Promise<TestPlan> {
-    const plan = await this.getDetail(id);
+  async update(id: string, dto: UpdateTestPlanDto, userId: string, projectId?: string): Promise<TestPlan> {
+    const plan = await this.getDetail(id, projectId);
     if (dto.planName !== undefined) requireName(dto.planName, '测试计划名称');
 
     const setParts: any[] = [];
@@ -206,11 +224,14 @@ export class TestPlanService {
     }
     if (dto.expectedStartDate !== undefined) setParts.push(sql`expected_start_date = ${dto.expectedStartDate || null}::date`);
     if (dto.expectedEndDate !== undefined) setParts.push(sql`expected_end_date = ${dto.expectedEndDate || null}::date`);
+    const relatedVersion = dto.relatedVersion !== undefined
+      ? await this.resolveRelatedVersion(dto.relatedVersion, projectId!)
+      : undefined;
     if (dto.relatedVersion !== undefined) {
       setParts.push(sql`related_version = ${
-        dto.relatedVersion
+        relatedVersion
           ? sql`jsonb_build_object(
-              'link_record_ids', jsonb_build_array(CAST(${dto.relatedVersion} AS text))
+              'link_record_ids', jsonb_build_array(CAST(${relatedVersion} AS text))
             )`
           : null
       }`);
@@ -236,11 +257,11 @@ export class TestPlanService {
     if (rows.length === 0) {
       throw new ConflictException('测试计划已被其他人修改，请刷新后重试');
     }
-    return this.getDetail(rows[0].id);
+    return this.getDetail(rows[0].id, projectId);
   }
 
-  async delete(id: string): Promise<void> {
-    const plan = await this.getDetail(id);
+  async delete(id: string, projectId?: string): Promise<void> {
+    const plan = await this.getDetail(id, projectId);
     const result = await this.db
       .delete(testPlan)
       .where(eq(testPlan.id, plan.id))
@@ -248,6 +269,22 @@ export class TestPlanService {
     if (result.length === 0) {
       throw new NotFoundException('测试计划不存在');
     }
+  }
+
+  private async resolveRelatedVersion(value: string | undefined, projectId: string): Promise<string | null> {
+    if (!value) return null;
+    const rows = await this.db
+      .select({ id: mainVersionManage.id, baseRecordId: mainVersionManage.baseRecordId })
+      .from(mainVersionManage)
+      .where(and(
+        isValidUuid(value)
+          ? or(eq(mainVersionManage.id, value), eq(mainVersionManage.baseRecordId, value))
+          : eq(mainVersionManage.baseRecordId, value),
+        eq(mainVersionManage.projectId, projectId),
+      ))
+      .limit(1);
+    if (!rows[0]) throw new BadRequestException('关联版本不存在或不属于当前项目');
+    return rows[0].baseRecordId || rows[0].id;
   }
 
   private extractRecordIds(value: unknown): string[] {

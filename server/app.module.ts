@@ -12,6 +12,7 @@ import { WorkbenchModule } from './modules/workbench/workbench.module';
 import { OptionsModule } from './modules/options/options.module';
 import { SubRequirementModule } from './modules/sub-requirement/sub-requirement.module';
 import { ViewModule } from './modules/view/view.module';
+import { ProjectModule } from './modules/project/project.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { ViewModule } from './modules/view/view.module';
     // ====== @route-section: business-modules START ======
     // Place all business modules here.Do NOT add fallback modules here.
     DashboardModule,
+    ProjectModule,
     VersionModule,
     RequirementModule,
     TestPlanModule,

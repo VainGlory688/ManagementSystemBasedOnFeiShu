@@ -28,6 +28,7 @@ export class TestPlanController {
     @Query('planningVersion') planningVersion?: string,
     @Query('executor') executor?: string,
     @Query('keyword') keyword?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<TestPlanListResponse> {
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 20;
@@ -41,19 +42,24 @@ export class TestPlanController {
       planningVersion,
       executor: executor === 'me' ? req.userContext?.userId || '' : executor,
       keyword,
+      projectId,
     });
   }
 
   @Get(':id')
-  async getDetail(@Param('id') id: string): Promise<TestPlan> {
-    return this.testPlanService.getDetail(id);
+  async getDetail(@Param('id') id: string, @Query('projectId') projectId?: string): Promise<TestPlan> {
+    return this.testPlanService.getDetail(id, projectId);
   }
 
   @NeedLogin()
   @Post()
-  async create(@Req() req: Request, @Body() dto: CreateTestPlanDto): Promise<TestPlan> {
+  async create(
+    @Req() req: Request,
+    @Body() dto: CreateTestPlanDto,
+    @Query('projectId') projectId?: string,
+  ): Promise<TestPlan> {
     const { userId } = req.userContext;
-    return this.testPlanService.create(dto, userId);
+    return this.testPlanService.create(dto, userId, projectId);
   }
 
   @NeedLogin()
@@ -62,13 +68,14 @@ export class TestPlanController {
     @Param('id') id: string,
     @Req() req: Request,
     @Body() dto: UpdateTestPlanDto,
+    @Query('projectId') projectId?: string,
   ): Promise<TestPlan> {
-    return this.testPlanService.update(id, dto, req.userContext.userId);
+    return this.testPlanService.update(id, dto, req.userContext.userId, projectId);
   }
 
   @NeedLogin()
   @Delete(':id')
-  async delete(@Param('id') id: string): Promise<void> {
-    return this.testPlanService.delete(id);
+  async delete(@Param('id') id: string, @Query('projectId') projectId?: string): Promise<void> {
+    return this.testPlanService.delete(id, projectId);
   }
 }

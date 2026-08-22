@@ -20,9 +20,12 @@ export class WorkbenchController {
 
   @NeedLogin()
   @Get('overview')
-  async getOverview(@Req() req: Request): Promise<WorkbenchOverview> {
+  async getOverview(
+    @Req() req: Request,
+    @Query('projectId') projectId?: string,
+  ): Promise<WorkbenchOverview> {
     const userId = req.userContext?.userId || '';
-    return this.workbenchService.getOverview(userId);
+    return this.workbenchService.getOverview(userId, projectId);
   }
 
   @NeedLogin()
@@ -33,11 +36,14 @@ export class WorkbenchController {
     @Query('pageSize') pageSize?: string,
     @Query('sort') sort?: 'priority',
     @Query('status') status?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<MyRequirementListResponse> {
     const userId = req.userContext?.userId || '';
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 10;
-    return this.workbenchService.getMyRequirements(userId, pageNum, sizeNum, sort, status);
+    return this.workbenchService.getMyRequirements(
+      userId, pageNum, sizeNum, sort, status, projectId,
+    );
   }
 
   @NeedLogin()
@@ -48,11 +54,14 @@ export class WorkbenchController {
     @Query('pageSize') pageSize?: string,
     @Query('sort') sort?: 'priority',
     @Query('status') status?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<MyDefectListResponse> {
     const userId = req.userContext?.userId || '';
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 10;
-    return this.workbenchService.getMyDefects(userId, pageNum, sizeNum, sort, status);
+    return this.workbenchService.getMyDefects(
+      userId, pageNum, sizeNum, sort, status, projectId,
+    );
   }
 
   @NeedLogin()
@@ -61,12 +70,14 @@ export class WorkbenchController {
     @Req() req: Request,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<MyTestPlanListResponse> {
     const userId = req.userContext?.userId || '';
     return this.workbenchService.getMyTestPlans(
       userId,
       page ? parseInt(page, 10) : 1,
       pageSize ? parseInt(pageSize, 10) : 10,
+      projectId,
     );
   }
 
@@ -77,11 +88,12 @@ export class WorkbenchController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('sort') sort?: 'name',
+    @Query('projectId') projectId?: string,
   ): Promise<MyVersionListResponse> {
     const userId = req.userContext?.userId || '';
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 10;
-    return this.workbenchService.getMyVersions(userId, pageNum, sizeNum, sort);
+    return this.workbenchService.getMyVersions(userId, pageNum, sizeNum, sort, projectId);
   }
 
   @NeedLogin()
@@ -90,12 +102,14 @@ export class WorkbenchController {
     @Req() req: Request,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('projectId') projectId?: string,
   ): Promise<MyBlockedSubRequirementListResponse> {
     const userId = req.userContext?.userId || '';
     return this.workbenchService.getMyBlockedSubRequirements(
       userId,
       page ? parseInt(page, 10) : 1,
       pageSize ? parseInt(pageSize, 10) : 10,
+      projectId,
     );
   }
 }
