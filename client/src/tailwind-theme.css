@@ -509,3 +509,88 @@
     opacity: 1;
   }
 }
+
+.opening-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  overflow: hidden;
+  pointer-events: all;
+}
+
+.opening-splash__door {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  animation-duration: 0.7s;
+  animation-delay: 0.7s;
+  animation-fill-mode: forwards;
+  animation-timing-function: cubic-bezier(0.76, 0, 0.24, 1);
+}
+
+.opening-splash__door--left {
+  clip-path: polygon(
+    0 0,
+    calc(50% + var(--opening-split-offset)) 0,
+    calc(50% - var(--opening-split-offset)) 100%,
+    0 100%
+  );
+  animation-name: opening-door-left;
+}
+
+.opening-splash__door--right {
+  clip-path: polygon(
+    calc(50% + var(--opening-split-offset)) 0,
+    100% 0,
+    100% 100%,
+    calc(50% - var(--opening-split-offset)) 100%
+  );
+  animation-name: opening-door-right;
+}
+
+.opening-splash__title {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  margin: 0;
+  color: #fff;
+  font-family: "Bodoni 72", Didot, Georgia, serif;
+  font-size: clamp(3rem, 6vw, 5rem);
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: 0.08em;
+  transform: translate(-50%, -50%);
+  animation: opening-title 1.15s ease-in-out forwards;
+}
+
+@keyframes opening-door-left {
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes opening-door-right {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes opening-title {
+  0%, 14% {
+    opacity: 0;
+  }
+  30%, 58% {
+    opacity: 1;
+  }
+  78%, 100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opening-splash__door,
+  .opening-splash__title {
+    animation: none;
+  }
+}
