@@ -7,10 +7,14 @@ import dayjs, { type Dayjs } from 'dayjs';
 import { searchUsers } from '@/components/business-ui/api/users/service';
 import type { UserInput } from '@/components/business-ui/types/user';
 import { getRequirementList } from '@/api/requirement';
+import { getSubRequirementDetail, updateSubRequirement } from '@/api/sub-requirement';
+import { isOptimisticLockConflict } from '../../api/request-error';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { UserSelect } from '@/components/business-ui/user-select';
 import { searchUserInfoToUser } from '@/components/business-ui/user-select/utils';
+import { toast } from 'sonner';
 import type { SubRequirementItem, SubRequirementListResponse, VersionRequirement } from '@shared/api.interface';
 import { GANTT_PRIORITIES, GANTT_STATUSES, PersonnelGanttChart } from './PersonnelGanttChart';
 
@@ -55,6 +59,13 @@ const PersonnelGanttPage = ({
   const [filterPerson, setFilterPerson] = useState<string | null>(fixedPersonId || null);
   const [view, setView] = useState<GanttView>('month');
   const [currentDate, setCurrentDate] = useState(() => dayjs());
+  const [pendingReschedule, setPendingReschedule] = useState<{
+    item: SubRequirementItem;
+    startDate: string;
+    endDate: string;
+    mode: 'move' | 'extend';
+  } | null>(null);
+  const [savingReschedule, setSavingReschedule] = useState(false);
 
   useEffect(() => {
     setFilterPerson(fixedPersonId || null);
@@ -138,11 +149,8 @@ const PersonnelGanttPage = ({
   const personIds = useMemo(
     () => filterPerson
       ? [filterPerson]
-      : Array.from(new Set([
-        ...Object.keys(userProfiles),
-        ...subReqs.map((item) => item.appCurrentOwner).filter(Boolean),
-      ])),
-    [filterPerson, subReqs, userProfiles],
+      : Array.from(new Set(viewItems.map((item) => item.appCurrentOwner || 'unassigned'))),
+    [filterPerson, viewItems],
   );
 
   const moveView = (amount: number) => {
@@ -151,6 +159,39 @@ const PersonnelGanttPage = ({
       if (view === 'quarter') return date.add(amount * 3, 'month');
       return date.add(amount, view);
     });
+  };
+
+  const confirmReschedule = async () => {
+    if (!pendingReschedule) return;
+    setSavingReschedule(true);
+    try {
+      const updated = await updateSubRequirement(pendingReschedule.item.id, {
+        appExpectedStartDate: pendingReschedule.startDate,
+        appExpectedEndDate: pendingReschedule.endDate,
+        expectedUpdatedAt: pendingReschedule.item.updatedAt,
+      });
+      setSubReqs((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setPendingReschedule(null);
+      toast.success('子需求排期已更新');
+    } catch (saveError) {
+      if (isOptimisticLockConflict(saveError)) {
+        try {
+          const freshItem = await getSubRequirementDetail(pendingReschedule.item.id);
+          setSubReqs((items) => items.map((item) => item.id === freshItem.id ? freshItem : item));
+          setPendingReschedule((pending) => pending?.item.id === freshItem.id
+            ? { ...pending, item: freshItem }
+            : pending);
+          toast.info('子需求已被其他人修改，已刷新最新数据，请核对后重新确认');
+        } catch (refreshError) {
+          logger.error('刷新冲突子需求失败', refreshError);
+          toast.error('子需求已被其他人修改，且最新数据加载失败，请稍后刷新页面后重试');
+        }
+      } else {
+        toast.error('保存子需求排期失败，请稍后重试');
+      }
+    } finally {
+      setSavingReschedule(false);
+    }
   };
 
   /* ---------- 渲染 ---------- */
@@ -182,6 +223,7 @@ const PersonnelGanttPage = ({
             ? '查看分配给我的子需求排期，支持周、月、季度、年度时间视图'
             : '按人员查看子需求排期，支持周、月、季度、年度时间视图'}
         </p>
+        <p className="mt-1 text-xs text-muted-foreground">拖动子需求条可整体改期；拖动右侧手柄仅调整结束日期。确认前不会保存，未设置完整起止日期的任务不可拖动。</p>
       </div>
 
       {!fixedPersonId && (
@@ -263,9 +305,38 @@ const PersonnelGanttPage = ({
             personIds={personIds}
             userProfiles={userProfiles}
             requirements={requirements}
+            onReschedule={(item, startDate, endDate) => setPendingReschedule({ item, startDate, endDate, mode: 'move' })}
+            onDurationChange={(item, startDate, endDate) => setPendingReschedule({ item, startDate, endDate, mode: 'extend' })}
           />
         </CardContent>
       </Card>
+
+      <Dialog open={pendingReschedule !== null} onOpenChange={(open) => !open && !savingReschedule && setPendingReschedule(null)}>
+        <DialogContent className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>{pendingReschedule?.mode === 'extend' ? '确认调整子需求工期' : '确认调整子需求排期'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <p className="font-medium text-foreground">{pendingReschedule?.item.appSubRequirementName}</p>
+            <p className="text-muted-foreground">
+              {pendingReschedule?.item.appExpectedStartDate.slice(0, 10)} 至 {pendingReschedule?.item.appExpectedEndDate.slice(0, 10)}
+              {' → '}
+              <span className="font-mono text-foreground">{pendingReschedule?.startDate} 至 {pendingReschedule?.endDate}</span>
+            </p>
+            <p className="border-l-2 border-warning bg-[hsl(38_70%_93%)] px-3 py-2 text-xs text-[hsl(38_75%_30%)]">
+              {pendingReschedule?.mode === 'extend'
+                ? '将保持开始日期与负责人不变，仅调整预计结束日期，最短工期为 1 天。确认前不会写入数据。'
+                : '将保持工期不变，仅整体移动开始和结束日期。确认前不会写入数据。'}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={savingReschedule} onClick={() => setPendingReschedule(null)}>取消</Button>
+            <Button disabled={savingReschedule} onClick={() => void confirmReschedule()}>
+              {savingReschedule ? '保存中…' : '确认改期'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

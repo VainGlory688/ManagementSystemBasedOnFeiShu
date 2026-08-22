@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { asc, count, desc, or, sql } from 'drizzle-orm';
+import { asc, count, desc, inArray, or, sql } from 'drizzle-orm';
 import {
   versionRequirement,
   defectItem,
@@ -12,15 +12,44 @@ import {
   WorkbenchOverview,
   MyRequirementListResponse,
   MyDefectListResponse,
+  MyTestPlanListResponse,
   MyVersionListResponse,
+  MyBlockedSubRequirementListResponse,
 } from '@shared/api.interface';
+import { isValidUuid } from '@server/common/utils/uuid';
+import { RequirementService } from '../requirement/requirement.service';
 
 function extractParentRecordIds(value: unknown): string[] {
-  if (!value || typeof value !== 'object') return [];
-  const ids = (value as { link_record_ids?: unknown }).link_record_ids;
-  return Array.isArray(ids)
-    ? ids.filter((id): id is string => typeof id === 'string')
-    : [];
+  if (!value) return [];
+  const values = Array.isArray(value) ? value : [value];
+  const ids: string[] = [];
+  for (const item of values) {
+    if (typeof item === 'string') {
+      ids.push(item);
+    } else if (item && typeof item === 'object') {
+      const relation = item as Record<string, unknown>;
+      if (Array.isArray(relation.link_record_ids)) {
+        ids.push(...relation.link_record_ids.filter(
+          (id): id is string => typeof id === 'string' && Boolean(id),
+        ));
+      }
+      for (const key of [
+        'id',
+        'baseRecordId',
+        'base_record_id',
+        'recordId',
+        'record_id',
+        'name',
+        'text',
+        'appReqName',
+        'title',
+      ]) {
+        const value = relation[key];
+        if (typeof value === 'string' && value) ids.push(value);
+      }
+    }
+  }
+  return ids;
 }
 
 function isOverdue(expectedEndDate: Date | string | null, status: string | null): boolean {
@@ -49,6 +78,7 @@ function getRequirementStatus(
 export class WorkbenchService {
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    private readonly requirementService: RequirementService,
   ) {}
 
   async getOverview(userId: string): Promise<WorkbenchOverview> {
@@ -121,6 +151,24 @@ export class WorkbenchService {
       ? itemsWithStatus.filter((item) => item.currentStatus === status)
       : itemsWithStatus;
     const pageItems = matchedItems.slice((page - 1) * pageSize, page * pageSize);
+    const versionIds = pageItems
+      .map(({ item }) => item.planningVersion)
+      .filter((id): id is string => Boolean(id));
+    const versions = versionIds.length === 0
+      ? []
+      : await this.db
+          .select({
+            id: mainVersionManage.id,
+            baseRecordId: mainVersionManage.baseRecordId,
+            versionName: mainVersionManage.versionName,
+          })
+          .from(mainVersionManage)
+          .where(inArray(mainVersionManage.baseRecordId, versionIds));
+    const versionNames = new Map<string, string>();
+    for (const version of versions) {
+      versionNames.set(version.id, version.versionName || '');
+      if (version.baseRecordId) versionNames.set(version.baseRecordId, version.versionName || '');
+    }
 
     return {
       items: pageItems.map(({ item, currentStatus }) => ({
@@ -129,7 +177,9 @@ export class WorkbenchService {
         appReqName: item.appReqName || '',
         priority: item.priority || '',
         appStatus: currentStatus,
-        planningVersionName: '',
+        planningVersionName: item.planningVersion
+          ? versionNames.get(item.planningVersion) || ''
+          : '',
         estimatedCompletionTime: item.estimatedCompletionTime?.toString() || '',
       })),
       total: matchedItems.length,
@@ -160,42 +210,211 @@ export class WorkbenchService {
         .offset((page - 1) * pageSize),
       this.db.select({ count: count() }).from(defectItem).where(where),
     ]);
+    const parentRelationValues = itemsRes.map((item) =>
+      extractParentRecordIds(item.appParentOrder),
+    );
+    const parentRequirementIds = [...new Set(parentRelationValues.flat())];
+    const localParentRequirementIds = parentRequirementIds.filter(isValidUuid);
+    const requirementRows = parentRequirementIds.length === 0
+      ? []
+      : await this.db
+          .select({
+            id: versionRequirement.id,
+            baseRecordId: versionRequirement.baseRecordId,
+            appReqName: versionRequirement.appReqName,
+            planningVersion: versionRequirement.planningVersion,
+          })
+          .from(versionRequirement)
+          .where(
+            localParentRequirementIds.length > 0
+              ? or(
+                  inArray(versionRequirement.id, localParentRequirementIds),
+                  inArray(versionRequirement.baseRecordId, parentRequirementIds),
+                  inArray(versionRequirement.appReqName, parentRequirementIds),
+                )
+              : or(
+                  inArray(versionRequirement.baseRecordId, parentRequirementIds),
+                  inArray(versionRequirement.appReqName, parentRequirementIds),
+                ),
+          );
+    const requirementsByIdentifier = new Map<string, (typeof requirementRows)[number]>();
+    const requirementsByName = new Map<string, (typeof requirementRows)[number]>();
+    const ambiguousNames = new Set<string>();
+    for (const requirement of requirementRows) {
+      requirementsByIdentifier.set(requirement.id, requirement);
+      if (requirement.baseRecordId) {
+        requirementsByIdentifier.set(requirement.baseRecordId, requirement);
+      }
+      const name = requirement.appReqName || '';
+      if (name && requirementsByName.has(name)) ambiguousNames.add(name);
+      else if (name) requirementsByName.set(name, requirement);
+    }
+    for (const name of ambiguousNames) requirementsByName.delete(name);
+    const matchedRequirements = parentRelationValues.map((values) => (
+      values.map((value) => requirementsByIdentifier.get(value)).find(Boolean)
+      || values.map((value) => requirementsByName.get(value)).find(Boolean)
+    ));
+    const versionIds = [...new Set(
+      matchedRequirements
+        .map((requirement) => requirement?.planningVersion)
+        .filter((value): value is string => Boolean(value)),
+    )];
+    const localVersionIds = versionIds.filter(isValidUuid);
+    const versionRecords = versionIds.length === 0
+      ? []
+      : await this.db
+          .select({
+            id: mainVersionManage.id,
+            baseRecordId: mainVersionManage.baseRecordId,
+            versionName: mainVersionManage.versionName,
+          })
+          .from(mainVersionManage)
+          .where(
+            localVersionIds.length > 0
+              ? or(
+                  inArray(mainVersionManage.id, localVersionIds),
+                  inArray(mainVersionManage.baseRecordId, versionIds),
+                )
+              : inArray(mainVersionManage.baseRecordId, versionIds),
+          );
+    const versionNames = new Map<string, string>();
+    for (const version of versionRecords) {
+      if (version.baseRecordId) versionNames.set(version.baseRecordId, version.versionName || '');
+      versionNames.set(version.id, version.versionName || '');
+    }
 
     return {
-      items: itemsRes.map((d) => ({
-        id: d.id,
-        baseRecordId: d.baseRecordId || '',
-        defectName: d.defectName || '',
-        severity: d.severity || '',
-        priority: d.priority || '',
-        status: d.status || '',
-        relatedVersionName: '',
-        overdue: false,
-      })),
+      items: itemsRes.map((d, index) => {
+        const versionId = matchedRequirements[index]?.planningVersion;
+        return {
+          id: d.id,
+          baseRecordId: d.baseRecordId || '',
+          defectName: d.defectName || '',
+          severity: d.severity || '',
+          priority: d.priority || '',
+          status: d.status || '',
+          relatedVersionName: versionId ? versionNames.get(versionId) || '' : '',
+          overdue: false,
+        };
+      }),
+      total: Number(totalRes[0]?.count ?? 0),
+    };
+  }
+
+  async getMyTestPlans(
+    userId: string,
+    page: number,
+    pageSize: number,
+  ): Promise<MyTestPlanListResponse> {
+    const where = sql`${userId} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${testPlan.executor}) u))`;
+    const [itemsRes, totalRes] = await Promise.all([
+      this.db
+        .select()
+        .from(testPlan)
+        .where(where)
+        .orderBy(desc(testPlan.updatedAt))
+        .limit(pageSize)
+        .offset((page - 1) * pageSize),
+      this.db.select({ count: count() }).from(testPlan).where(where),
+    ]);
+    const relatedVersionIds = [...new Set(
+      itemsRes.flatMap((item) => extractParentRecordIds(item.relatedVersion)),
+    )];
+    const versions = relatedVersionIds.length === 0
+      ? []
+      : await this.db
+          .select({
+            id: mainVersionManage.id,
+            baseRecordId: mainVersionManage.baseRecordId,
+            versionName: mainVersionManage.versionName,
+          })
+          .from(mainVersionManage)
+          .where(inArray(mainVersionManage.baseRecordId, relatedVersionIds));
+    const versionNames = new Map<string, string>();
+    for (const version of versions) {
+      versionNames.set(version.id, version.versionName || '');
+      if (version.baseRecordId) versionNames.set(version.baseRecordId, version.versionName || '');
+    }
+
+    return {
+      items: itemsRes.map((item) => {
+        const relatedVersionId = extractParentRecordIds(item.relatedVersion)[0];
+        return {
+          id: item.id,
+          baseRecordId: item.baseRecordId || '',
+          planName: item.planName || '',
+          testStatus: item.testStatus || '',
+          priority: item.priority || '',
+          relatedVersionName: relatedVersionId ? versionNames.get(relatedVersionId) || '' : '',
+          expectedEndDate: item.expectedEndDate?.toString() || '',
+        };
+      }),
       total: Number(totalRes[0]?.count ?? 0),
     };
   }
 
   async getMyVersions(userId: string, page: number, pageSize: number, sort?: 'name'): Promise<MyVersionListResponse> {
-    const [itemsRes, totalRes] = await Promise.all([
-      this.db
-        .select()
-        .from(mainVersionManage)
-        .orderBy(sort === 'name' ? asc(mainVersionManage.versionName) : desc(mainVersionManage.updatedAt))
-        .limit(pageSize)
-        .offset((page - 1) * pageSize),
-      this.db.select({ count: count() }).from(mainVersionManage),
+    const ownerWhere = sql`(${versionRequirement.currentOwner}).user_id = ${userId}`;
+    const executorWhere = sql`${userId} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${testPlan.executor}) u))`;
+    const [requirements, testPlans] = await Promise.all([
+      this.db.select({ planningVersion: versionRequirement.planningVersion }).from(versionRequirement).where(ownerWhere),
+      this.db.select({ relatedVersion: testPlan.relatedVersion }).from(testPlan).where(executorWhere),
     ]);
+    const versionIds = [...new Set([
+      ...requirements.map((item) => item.planningVersion).filter((id): id is string => Boolean(id)),
+      ...testPlans.flatMap((item) => extractParentRecordIds(item.relatedVersion)),
+    ])];
+    const versionRecords = versionIds.length === 0
+      ? []
+      : await this.db
+          .select()
+          .from(mainVersionManage);
+    const relatedVersionIds = new Set(versionIds);
+    const allItems = versionRecords.filter((version) => (
+      relatedVersionIds.has(version.id)
+      || (version.baseRecordId ? relatedVersionIds.has(version.baseRecordId) : false)
+      || (version.versionName ? relatedVersionIds.has(version.versionName) : false)
+    ));
+    const itemsRes = [...allItems].sort((a, b) => (
+      sort === 'name'
+        ? (a.versionName || '').localeCompare(b.versionName || '', 'zh-CN')
+        : b.updatedAt.getTime() - a.updatedAt.getTime()
+    ));
+    const pageItems = itemsRes.slice((page - 1) * pageSize, page * pageSize);
 
     return {
-      items: itemsRes.map((v) => ({
+      items: pageItems.map((v) => ({
         id: v.id,
         baseRecordId: v.baseRecordId || '',
         versionName: v.versionName || '',
         appStatus: v.appStatus || '',
         currentMilestone: this.getCurrentMilestone(v),
       })),
-      total: Number(totalRes[0]?.count ?? 0),
+      total: itemsRes.length,
+    };
+  }
+
+  async getMyBlockedSubRequirements(
+    userId: string,
+    page: number,
+    pageSize: number,
+  ): Promise<MyBlockedSubRequirementListResponse> {
+    const requirements = await this.db.select().from(versionRequirement);
+    const parentIds = new Set(requirements.flatMap((requirement) =>
+      [requirement.id, requirement.baseRecordId].filter(
+        (id): id is string => Boolean(id),
+      )));
+    const subItems = (await this.db.select().from(subRequirementItem))
+      .filter((item) =>
+        extractParentRecordIds(item.appParentWorkItem)
+          .some((parentId) => parentIds.has(parentId)));
+    const matchedItems = this.requirementService
+      .getBlockedSubRequirements(requirements, subItems)
+      .filter((item) => item.appCurrentOwner === userId);
+
+    return {
+      items: matchedItems.slice((page - 1) * pageSize, page * pageSize),
+      total: matchedItems.length,
     };
   }
 

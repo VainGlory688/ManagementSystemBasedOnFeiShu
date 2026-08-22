@@ -7,7 +7,11 @@ import {
 } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { and, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
-import { defectItem, versionRequirement } from '@server/database/schema';
+import {
+  defectItem,
+  mainVersionManage,
+  versionRequirement,
+} from '@server/database/schema';
 import {
   DefectListResponse,
   DefectItem,
@@ -25,6 +29,7 @@ interface ListQuery {
   businessLine?: string;
   discoveryEnvironment?: string;
   testingStage?: string;
+  planningVersion?: string;
   currentOwner?: string;
   keyword?: string;
 }
@@ -42,6 +47,52 @@ function requireName(value: unknown, field: string): void {
   }
 }
 
+function validateRejectionReason(status: string | undefined, rejectionReason: string | undefined): void {
+  if (status === '已驳回' && !rejectionReason?.trim()) {
+    throw new BadRequestException('驳回缺陷时必须填写驳回原因');
+  }
+}
+
+interface RelationCandidates {
+  identifiers: string[];
+  names: string[];
+}
+
+function extractRelationCandidates(value: unknown): RelationCandidates {
+  const identifiers = new Set<string>();
+  const names = new Set<string>();
+  const add = (target: Set<string>, candidate: unknown) => {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      target.add(candidate.trim());
+    }
+  };
+  const visit = (relation: unknown) => {
+    if (typeof relation === 'string') {
+      add(identifiers, relation);
+      add(names, relation);
+      return;
+    }
+    if (Array.isArray(relation)) {
+      relation.forEach(visit);
+      return;
+    }
+    if (!relation || typeof relation !== 'object') return;
+
+    const item = relation as Record<string, unknown>;
+    if (Array.isArray(item.link_record_ids)) {
+      item.link_record_ids.forEach((id) => add(identifiers, id));
+    }
+    for (const key of ['id', 'baseRecordId', 'base_record_id', 'recordId', 'record_id']) {
+      add(identifiers, item[key]);
+    }
+    for (const key of ['name', 'text', 'appReqName', 'title']) {
+      add(names, item[key]);
+    }
+  };
+  visit(value);
+  return { identifiers: [...identifiers], names: [...names] };
+}
+
 @Injectable()
 export class DefectService {
   constructor(
@@ -49,7 +100,7 @@ export class DefectService {
   ) {}
 
   async getList(query: ListQuery): Promise<DefectListResponse> {
-    const { page, pageSize, status, severity, priority, businessLine, discoveryEnvironment, testingStage, currentOwner, keyword } = query;
+    const { page, pageSize, status, severity, priority, businessLine, discoveryEnvironment, testingStage, planningVersion, currentOwner, keyword } = query;
     const conditions = [];
     if (status) conditions.push(eq(defectItem.status, status));
     if (severity) conditions.push(eq(defectItem.severity, severity));
@@ -57,6 +108,32 @@ export class DefectService {
     if (businessLine) conditions.push(eq(defectItem.businessLine, businessLine));
     if (discoveryEnvironment) conditions.push(eq(defectItem.discoveryEnvironment, discoveryEnvironment));
     if (testingStage) conditions.push(eq(defectItem.testingStage, testingStage));
+    if (planningVersion) {
+      const requirements = await this.db
+        .select({
+          id: versionRequirement.id,
+          baseRecordId: versionRequirement.baseRecordId,
+        })
+        .from(versionRequirement)
+        .where(eq(versionRequirement.planningVersion, planningVersion));
+      const parentIds = [...new Set(
+        requirements.flatMap((requirement) =>
+          [requirement.id, requirement.baseRecordId].filter(
+            (id): id is string => Boolean(id),
+          ),
+        ),
+      )];
+      if (parentIds.length === 0) {
+        conditions.push(sql`FALSE`);
+      } else {
+        conditions.push(
+          or(...parentIds.map((parentId) =>
+            sql`${defectItem.appParentOrder} -> 'link_record_ids'
+              @> jsonb_build_array(${parentId}::text)`,
+          )),
+        );
+      }
+    }
     if (currentOwner) conditions.push(sql`${currentOwner} = ANY(ARRAY(SELECT (u).user_id FROM unnest(${defectItem.currentOwner}) u))`);
     if (keyword) conditions.push(ilike(defectItem.defectName, `%${keyword}%`));
 
@@ -74,48 +151,12 @@ export class DefectService {
     ]);
 
     const items = itemsRes.map((d) => this.mapDefect(d));
+    await this.enrichRelations(items, itemsRes.map((item) => item.appParentOrder));
     items.sort((a, b) => {
       const sa = SEVERITY_ORDER[a.severity] ?? 99;
       const sb = SEVERITY_ORDER[b.severity] ?? 99;
       return sa - sb;
     });
-
-    // Resolve parent order names from version_requirement
-    const parentOrderIds = items
-      .map((d: DefectItem) => d.appParentOrderRecordId)
-      .filter((id): id is string => Boolean(id));
-    if (parentOrderIds.length > 0) {
-      const localParentOrderIds = parentOrderIds.filter(isValidUuid);
-      const reqs = await this.db
-        .select({
-          id: versionRequirement.id,
-          baseRecordId: versionRequirement.baseRecordId,
-          appReqName: versionRequirement.appReqName,
-        })
-        .from(versionRequirement)
-        .where(
-          localParentOrderIds.length > 0
-            ? or(
-                inArray(versionRequirement.baseRecordId, parentOrderIds),
-                inArray(versionRequirement.id, localParentOrderIds),
-              )
-            : inArray(versionRequirement.baseRecordId, parentOrderIds),
-        );
-      const nameMap = new Map<string, string>();
-      for (const requirement of reqs) {
-        nameMap.set(requirement.id, requirement.appReqName || '');
-        if (requirement.baseRecordId) {
-          nameMap.set(requirement.baseRecordId, requirement.appReqName || '');
-        }
-      }
-      for (const item of items) {
-        if (item.appParentOrderRecordId) {
-          item.appParentOrderName = nameMap.get(
-            item.appParentOrderRecordId,
-          );
-        }
-      }
-    }
 
     return {
       items,
@@ -137,28 +178,13 @@ export class DefectService {
       throw new NotFoundException('缺陷不存在');
     }
     const item = this.mapDefect(result[0], true);
-    if (item.appParentOrderRecordId) {
-      const reqs = await this.db
-        .select({ appReqName: versionRequirement.appReqName })
-        .from(versionRequirement)
-        .where(
-          isValidUuid(item.appParentOrderRecordId)
-            ? or(
-                eq(versionRequirement.id, item.appParentOrderRecordId),
-                eq(versionRequirement.baseRecordId, item.appParentOrderRecordId),
-              )
-            : eq(versionRequirement.baseRecordId, item.appParentOrderRecordId),
-        )
-        .limit(1);
-      if (reqs.length > 0) {
-        item.appParentOrderName = reqs[0].appReqName || undefined;
-      }
-    }
+    await this.enrichRelations([item], [result[0].appParentOrder]);
     return item;
   }
 
   async create(dto: CreateDefectDto, userId: string): Promise<DefectItem> {
     requireName(dto.defectName, '缺陷名称');
+    validateRejectionReason(dto.status, dto.rejectionReason);
     const ownerProfiles = dto.currentOwner && dto.currentOwner.length > 0
       ? sql`ARRAY[${sql.join(dto.currentOwner.map((id: string) => sql`ROW(${id})::user_profile`), sql`, `)}]::user_profile[]`
       : null;
@@ -174,7 +200,7 @@ export class DefectService {
         ${dto.priority || null},
         ${ownerProfiles},
         ${dto.businessLine || null},
-        ${dto.rejectionReason || null},
+        ${dto.status === '已驳回' ? dto.rejectionReason || null : null},
         ${dto.discoveryEnvironment || null},
         ${dto.testingStage || null},
         ${userId ? sql`ROW(${userId})::user_profile` : null},
@@ -191,6 +217,9 @@ export class DefectService {
   async update(id: string, dto: UpdateDefectDto, userId: string): Promise<DefectItem> {
     const defect = await this.getDetail(id);
     if (dto.defectName !== undefined) requireName(dto.defectName, '缺陷名称');
+    const nextStatus = dto.status ?? defect.status;
+    const nextRejectionReason = dto.rejectionReason ?? defect.rejectionReason;
+    validateRejectionReason(nextStatus, nextRejectionReason);
 
     const setParts: any[] = [];
     if (dto.defectName !== undefined) setParts.push(sql`defect_name = ${dto.defectName}`);
@@ -205,7 +234,14 @@ export class DefectService {
       }`);
     }
     if (dto.businessLine !== undefined) setParts.push(sql`business_line = ${dto.businessLine || null}`);
-    if (dto.rejectionReason !== undefined) setParts.push(sql`rejection_reason = ${dto.rejectionReason || null}`);
+    if (
+      dto.status !== undefined
+      && nextStatus !== '已驳回'
+    ) {
+      setParts.push(sql`rejection_reason = NULL`);
+    } else if (dto.rejectionReason !== undefined) {
+      setParts.push(sql`rejection_reason = ${dto.rejectionReason || null}`);
+    }
     if (dto.discoveryEnvironment !== undefined) setParts.push(sql`discovery_environment = ${dto.discoveryEnvironment || null}`);
     if (dto.testingStage !== undefined) setParts.push(sql`testing_stage = ${dto.testingStage || null}`);
     if (dto.detail !== undefined) setParts.push(sql`detail = ${dto.detail || null}`);
@@ -246,10 +282,7 @@ export class DefectService {
   }
 
   private mapDefect(d: typeof defectItem.$inferSelect, withDetail = false): DefectItem {
-    const parent = d.appParentOrder as any;
-    const parentRecordId = Array.isArray(parent?.link_record_ids)
-      ? parent.link_record_ids[0]
-      : parent?.recordId;
+    const { identifiers } = extractRelationCandidates(d.appParentOrder);
     return {
       id: d.id,
       baseRecordId: d.baseRecordId || '',
@@ -267,9 +300,110 @@ export class DefectService {
       createdAt: d.createdAt.toISOString(),
       detail: withDetail ? d.detail || '' : undefined,
       appParentOrderName: undefined,
-      appParentOrderRecordId: parentRecordId || undefined,
+      appParentOrderRecordId: identifiers[0],
       relatedVersionName: '',
       relatedTestPlanName: '',
     };
+  }
+
+  private async enrichRelations(
+    defects: DefectItem[],
+    parentRelations: unknown[],
+  ): Promise<void> {
+    const candidates = parentRelations.map(extractRelationCandidates);
+    const identifiers = [...new Set(candidates.flatMap((item) => item.identifiers))];
+    const names = [...new Set(candidates.flatMap((item) => item.names))];
+    if (identifiers.length === 0 && names.length === 0) return;
+
+    const localIds = identifiers.filter(isValidUuid);
+    const requirementConditions = [
+      identifiers.length > 0
+        ? inArray(versionRequirement.baseRecordId, identifiers)
+        : undefined,
+      localIds.length > 0
+        ? inArray(versionRequirement.id, localIds)
+        : undefined,
+      names.length > 0
+        ? inArray(versionRequirement.appReqName, names)
+        : undefined,
+    ].filter((condition): condition is NonNullable<typeof condition> => Boolean(condition));
+    const requirements = await this.db
+      .select({
+        id: versionRequirement.id,
+        baseRecordId: versionRequirement.baseRecordId,
+        appReqName: versionRequirement.appReqName,
+        planningVersion: versionRequirement.planningVersion,
+      })
+      .from(versionRequirement)
+      .where(or(...requirementConditions));
+
+    const requirementsByIdentifier = new Map<string, (typeof requirements)[number]>();
+    const requirementsByName = new Map<string, (typeof requirements)[number]>();
+    const ambiguousNames = new Set<string>();
+    for (const requirement of requirements) {
+      requirementsByIdentifier.set(requirement.id, requirement);
+      if (requirement.baseRecordId) {
+        requirementsByIdentifier.set(requirement.baseRecordId, requirement);
+      }
+      const name = requirement.appReqName || '';
+      if (name && requirementsByName.has(name)) {
+        ambiguousNames.add(name);
+      } else if (name) {
+        requirementsByName.set(name, requirement);
+      }
+    }
+    for (const name of ambiguousNames) requirementsByName.delete(name);
+
+    const matchedRequirements = candidates.map((relation) => (
+      relation.identifiers.map((id) => requirementsByIdentifier.get(id)).find(Boolean)
+      || relation.names.map((name) => requirementsByName.get(name)).find(Boolean)
+    ));
+    const versionKeys = [...new Set(
+      matchedRequirements
+        .map((requirement) => requirement?.planningVersion)
+        .filter((value): value is string => Boolean(value)),
+    )];
+    const localVersionIds = versionKeys.filter(isValidUuid);
+    const versions = versionKeys.length === 0
+      ? []
+      : await this.db
+          .select({
+            id: mainVersionManage.id,
+            baseRecordId: mainVersionManage.baseRecordId,
+            versionName: mainVersionManage.versionName,
+          })
+          .from(mainVersionManage)
+          .where(
+            localVersionIds.length > 0
+              ? or(
+                  inArray(mainVersionManage.baseRecordId, versionKeys),
+                  inArray(mainVersionManage.id, localVersionIds),
+                )
+              : inArray(mainVersionManage.baseRecordId, versionKeys),
+          );
+    const versionsByKey = new Map<string, (typeof versions)[number]>();
+    for (const version of versions) {
+      versionsByKey.set(version.id, version);
+      if (version.baseRecordId) versionsByKey.set(version.baseRecordId, version);
+    }
+
+    defects.forEach((defect, index) => {
+      const requirement = matchedRequirements[index];
+      if (!requirement) {
+        const fallbackName = candidates[index].names[0];
+        defect.appParentOrderName = fallbackName || undefined;
+        defect.appParentOrderRecordId = undefined;
+        return;
+      }
+      defect.appParentOrderName = requirement.appReqName || undefined;
+      // The client stores relation values by base record ID. Returning the
+      // database UUID here prevents the edit form from matching its option.
+      defect.appParentOrderRecordId = requirement.baseRecordId || requirement.id;
+      const version = requirement.planningVersion
+        ? versionsByKey.get(requirement.planningVersion)
+        : undefined;
+      defect.relatedVersionName = version?.versionName || '';
+      defect.relatedVersionId = version?.id;
+    });
   }
 }

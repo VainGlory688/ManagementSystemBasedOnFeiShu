@@ -79,6 +79,8 @@ export interface VersionSummary {
   testPlanCount: number;
   defectCount: number;
   defectBySeverity: DefectSeverityStat[];
+  canClose: boolean;
+  closureBlockers: string[];
 }
 
 export interface VersionRequirement {
@@ -115,6 +117,7 @@ export interface RequirementPipelineEdge {
 
 export interface RequirementPipelineConfig {
   edges: RequirementPipelineEdge[];
+  updatedAt?: string;
 }
 
 export interface UpdateRequirementPipelineDto {
@@ -152,6 +155,7 @@ export interface ExceptionItemsResponse {
   overdueRequirements: VersionRequirement[];
   unscheduledOrTodoRequirements: VersionRequirement[];
   todayDueSubRequirements: SubRequirementItem[];
+  blockedSubRequirements: SubRequirementItem[];
 }
 
 export interface TestPlan {
@@ -194,6 +198,7 @@ export interface DefectItem {
   appParentOrderName?: string;
   appParentOrderRecordId?: string;
   relatedVersionName?: string;
+  relatedVersionId?: string;
   relatedTestPlanName?: string;
 }
 
@@ -239,6 +244,21 @@ export interface MyDefectListResponse {
   total: number;
 }
 
+export interface MyTestPlanItem {
+  id: string;
+  baseRecordId: string;
+  planName: string;
+  testStatus: string;
+  priority: string;
+  relatedVersionName?: string;
+  expectedEndDate: string;
+}
+
+export interface MyTestPlanListResponse {
+  items: MyTestPlanItem[];
+  total: number;
+}
+
 export interface MyVersionItem {
   id: string;
   baseRecordId: string;
@@ -249,6 +269,11 @@ export interface MyVersionItem {
 
 export interface MyVersionListResponse {
   items: MyVersionItem[];
+  total: number;
+}
+
+export interface MyBlockedSubRequirementListResponse {
+  items: SubRequirementItem[];
   total: number;
 }
 

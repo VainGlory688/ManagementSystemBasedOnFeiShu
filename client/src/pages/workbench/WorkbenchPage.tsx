@@ -1,23 +1,30 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
 import { logger } from '@lark-apaas/client-toolkit/logger';
 import { motion } from 'framer-motion';
 import {
   getWorkbenchOverview,
   getMyRequirements,
   getMyDefects,
+  getMyTestPlans,
   getMyVersions,
+  getMyBlockedSubRequirements,
 } from '@client/src/api/workbench';
 import type {
   WorkbenchOverview,
   MyRequirementItem,
   MyDefectItem,
+  MyTestPlanItem,
   MyVersionItem,
+  SubRequirementItem,
 } from '@shared/api.interface';
 import { WorkbenchGreeting } from './WorkbenchGreeting';
 import { WorkbenchStats } from './WorkbenchStats';
 import { RequirementList } from './RequirementList';
 import { DefectList } from './DefectList';
 import { VersionList } from './VersionList';
+import { TestPlanList } from './TestPlanList';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 import PersonnelGanttPage from '@/pages/personnel-gantt/PersonnelGanttPage';
 
@@ -37,18 +44,62 @@ function ListPager({ page, total, onPageChange }: { page: number; total: number;
   );
 }
 
+function BlockedSubRequirementList({
+  items,
+  loading,
+}: {
+  items: SubRequirementItem[];
+  loading: boolean;
+}) {
+  const navigate = useNavigate();
+  if (loading) return <div className="h-24 animate-pulse rounded-sm bg-muted/50" />;
+  if (items.length === 0) return <p className="py-5 text-center text-sm text-muted-foreground">暂无被流水线阻塞的子需求</p>;
+
+  return (
+    <div className="divide-y divide-border">
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          onClick={() => navigate(`/sub-requirements/${item.id}`)}
+          className="group flex w-full items-center gap-3 px-1 py-2.5 text-left transition-colors hover:bg-accent/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+        >
+          <AlertTriangle className="size-4 shrink-0 text-severity-fatal" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-foreground group-hover:text-primary">
+              {item.appSubRequirementName || '未命名子需求'}
+            </span>
+            <span className="block truncate text-xs text-muted-foreground">
+              {item.appParentWorkItemName || '未关联需求'}
+            </span>
+          </span>
+          <span className="shrink-0 rounded-full bg-severity-fatal-bg px-2 py-0.5 text-xs text-severity-fatal">
+            {item.appPriority || '未设优先级'}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const WorkbenchPage = () => {
   const currentUserId = typeof window === 'undefined' ? undefined : window.userId;
   const [overview, setOverview] = useState<WorkbenchOverview | null>(null);
   const [requirements, setRequirements] = useState<MyRequirementItem[]>([]);
   const [defects, setDefects] = useState<MyDefectItem[]>([]);
+  const [testPlans, setTestPlans] = useState<MyTestPlanItem[]>([]);
   const [versions, setVersions] = useState<MyVersionItem[]>([]);
+  const [blockedSubRequirements, setBlockedSubRequirements] = useState<SubRequirementItem[]>([]);
   const [requirementTotal, setRequirementTotal] = useState(0);
   const [defectTotal, setDefectTotal] = useState(0);
+  const [testPlanTotal, setTestPlanTotal] = useState(0);
   const [versionTotal, setVersionTotal] = useState(0);
+  const [blockedSubRequirementTotal, setBlockedSubRequirementTotal] = useState(0);
   const [requirementPage, setRequirementPage] = useState(1);
   const [defectPage, setDefectPage] = useState(1);
+  const [testPlanPage, setTestPlanPage] = useState(1);
   const [versionPage, setVersionPage] = useState(1);
+  const [blockedSubRequirementPage, setBlockedSubRequirementPage] = useState(1);
   const [requirementSort, setRequirementSort] = useState<'priority' | 'updated'>('priority');
   const [defectSort, setDefectSort] = useState<'priority' | 'updated'>('priority');
   const [requirementStatus, setRequirementStatus] = useState('');
@@ -57,7 +108,9 @@ const WorkbenchPage = () => {
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [loadingReq, setLoadingReq] = useState(true);
   const [loadingDefect, setLoadingDefect] = useState(true);
+  const [loadingTestPlan, setLoadingTestPlan] = useState(true);
   const [loadingVersion, setLoadingVersion] = useState(true);
+  const [loadingBlockedSubRequirements, setLoadingBlockedSubRequirements] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { options: fieldOptions } = useFieldOptions();
 
@@ -109,6 +162,17 @@ const WorkbenchPage = () => {
   }, [defectPage, defectSort, defectStatus]);
 
   useEffect(() => {
+    setLoadingTestPlan(true);
+    getMyTestPlans(testPlanPage, PAGE_SIZE)
+      .then((response) => {
+        setTestPlans(response.items);
+        setTestPlanTotal(response.total);
+      })
+      .catch((err: unknown) => logger.error('工作台测试计划加载失败', err))
+      .finally(() => setLoadingTestPlan(false));
+  }, [testPlanPage]);
+
+  useEffect(() => {
     setLoadingVersion(true);
     getMyVersions(versionPage, PAGE_SIZE, versionSort === 'name' ? 'name' : undefined)
       .then((response) => {
@@ -118,6 +182,17 @@ const WorkbenchPage = () => {
       .catch((err: unknown) => logger.error('工作台版本加载失败', err))
       .finally(() => setLoadingVersion(false));
   }, [versionPage, versionSort]);
+
+  useEffect(() => {
+    setLoadingBlockedSubRequirements(true);
+    getMyBlockedSubRequirements(blockedSubRequirementPage, PAGE_SIZE)
+      .then((response) => {
+        setBlockedSubRequirements(response.items);
+        setBlockedSubRequirementTotal(response.total);
+      })
+      .catch((err: unknown) => logger.error('工作台受阻子需求加载失败', err))
+      .finally(() => setLoadingBlockedSubRequirements(false));
+  }, [blockedSubRequirementPage]);
 
   return (
     <motion.div
@@ -201,6 +276,33 @@ const WorkbenchPage = () => {
           <DefectList items={defects} loading={loadingDefect} />
           <ListPager page={defectPage} total={defectTotal} onPageChange={setDefectPage} />
         </div>
+      </section>
+
+      <section className="rounded-sm border border-border bg-card p-5">
+        <div className="mb-4 flex items-center justify-between border-b border-border pb-3">
+          <h2 className="font-heading text-base font-semibold text-foreground">我参与的测试计划</h2>
+          <span className="font-mono text-xs text-muted-foreground">{loadingTestPlan ? '--' : testPlanTotal} 条</span>
+        </div>
+        <TestPlanList items={testPlans} loading={loadingTestPlan} />
+        <ListPager page={testPlanPage} total={testPlanTotal} onPageChange={setTestPlanPage} />
+      </section>
+
+      <section className="rounded-sm border border-border bg-card p-5">
+        <div className="mb-3 flex items-center justify-between border-b border-border pb-3">
+          <h2 className="font-heading text-base font-semibold text-foreground">我被阻塞的子需求</h2>
+          <span className="font-mono text-xs text-severity-fatal">
+            {loadingBlockedSubRequirements ? '--' : blockedSubRequirementTotal} 条
+          </span>
+        </div>
+        <BlockedSubRequirementList
+          items={blockedSubRequirements}
+          loading={loadingBlockedSubRequirements}
+        />
+        <ListPager
+          page={blockedSubRequirementPage}
+          total={blockedSubRequirementTotal}
+          onPageChange={setBlockedSubRequirementPage}
+        />
       </section>
 
       <section>

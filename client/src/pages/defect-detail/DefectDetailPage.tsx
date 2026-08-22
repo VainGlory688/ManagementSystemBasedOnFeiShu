@@ -16,6 +16,9 @@ import {
 import { logger } from '@lark-apaas/client-toolkit/logger';
 
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { InlineEditableField } from '@/components/InlineEditableField';
@@ -33,6 +36,7 @@ import { UserSelect } from '@/components/business-ui/user-select';
 import { LabelBadge } from '@/components/LabelBadge';
 
 import { getDefectDetail, updateDefect } from '@/api/defect';
+import { getBackendErrorMessage, isOptimisticLockConflict } from '../../api/request-error';
 import type { DefectItem, UpdateDefectDto } from '@shared/api.interface';
 import { UniversalLink } from '@lark-apaas/client-toolkit/components/UniversalLink';
 import { PillBadge } from '../defect-list/badge-helpers';
@@ -111,14 +115,19 @@ const DefectDetailPage = () => {
   const [loading, setLoading] = useState(true);
   const { options } = useFieldOptions();
   const saveQueueRef = useRef(Promise.resolve());
+  const updatedAtRef = useRef<string | undefined>(undefined);
+  const [rejectionDialogOpen, setRejectionDialogOpen] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState('');
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     setLoading(true);
+    updatedAtRef.current = undefined;
     getDefectDetail(id)
       .then((res) => {
         if (cancelled) return;
+        updatedAtRef.current = res.updatedAt;
         setDefect(res);
       })
       .catch((err: unknown) => {
@@ -153,20 +162,48 @@ const DefectDetailPage = () => {
   const createdDate = defect.createdAt
     ? new Date(defect.createdAt).toLocaleString('zh-CN')
     : '-';
-  const saveField = async <K extends keyof DefectItem>(field: K, value: DefectItem[K]) => {
+  const saveUpdate = async (changes: UpdateDefectDto) => {
     const defectId = defect.id;
     const save = saveQueueRef.current.catch(() => undefined).then(async () => {
       try {
-        const updated = await updateDefect(defectId, { [field]: value } as unknown as UpdateDefectDto);
+        const updated = await updateDefect(defectId, {
+          ...changes,
+          expectedUpdatedAt: updatedAtRef.current,
+        });
+        updatedAtRef.current = updated.updatedAt;
         setDefect(updated);
       } catch (err) {
         logger.error('更新缺陷字段失败', err);
-        toast.error('保存缺陷字段失败，请稍后重试');
+        toast.error(
+          isOptimisticLockConflict(err)
+            ? '缺陷已被其他人修改，请刷新页面后再编辑'
+            : getBackendErrorMessage(err) || '保存缺陷字段失败，请稍后重试',
+        );
         throw err;
       }
     });
     saveQueueRef.current = save;
     return save;
+  };
+  const saveField = async <K extends keyof DefectItem>(field: K, value: DefectItem[K]) =>
+    saveUpdate({ [field]: value } as unknown as UpdateDefectDto);
+
+  const handleStatusChange = async (status: string) => {
+    if (status === '已驳回' && !defect.rejectionReason) {
+      setRejectionReason('');
+      setRejectionDialogOpen(true);
+      return;
+    }
+    await saveUpdate({ status });
+  };
+
+  const confirmRejection = async () => {
+    if (!rejectionReason) {
+      toast.error('请选择驳回原因');
+      return;
+    }
+    await saveUpdate({ status: '已驳回', rejectionReason });
+    setRejectionDialogOpen(false);
   };
 
   return (
@@ -212,7 +249,7 @@ const DefectDetailPage = () => {
 
             {/* Badges */}
             <div className="flex flex-wrap gap-2 mt-4">
-              <DirectSelectField value={defect.status} options={options.defect_status || []} onChange={(value) => saveField('status', value)}>
+              <DirectSelectField value={defect.status} options={options.defect_status || []} onChange={handleStatusChange}>
                 <PillBadge text={defect.status} variant="status" />
               </DirectSelectField>
               <DirectSelectField value={defect.severity} options={options.defect_severity || []} onChange={(value) => saveField('severity', value)}>
@@ -277,9 +314,15 @@ const DefectDetailPage = () => {
                   <div className="font-semibold text-severity-fatal text-sm mb-1">
                     驳回原因
                   </div>
-                  <div className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
-                    {defect.rejectionReason}
-                  </div>
+                  <DirectSelectField
+                    value={defect.rejectionReason || ''}
+                    options={options.defect_reject_reason || []}
+                    onChange={(value) => saveField('rejectionReason', value)}
+                  >
+                    <div className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
+                      {defect.rejectionReason}
+                    </div>
+                  </DirectSelectField>
                 </div>
               </CardContent>
             </Card>
@@ -299,9 +342,15 @@ const DefectDetailPage = () => {
                   <div className="text-xs text-muted-foreground mb-0.5">
                     关联父单
                   </div>
-                  <GrowLink to={`/requirements/${defect.appParentOrderRecordId || ''}`}>
-                    {defect.appParentOrderName}
-                  </GrowLink>
+                  {defect.appParentOrderRecordId ? (
+                    <GrowLink to={`/requirements/${defect.appParentOrderRecordId}`}>
+                      {defect.appParentOrderName}
+                    </GrowLink>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">
+                      {defect.appParentOrderName}
+                    </span>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -338,9 +387,15 @@ const DefectDetailPage = () => {
                       <div className="text-xs text-muted-foreground mb-0.5">
                         所属版本
                       </div>
-                      <GrowLink to={`/versions`}>
-                        {defect.relatedVersionName}
-                      </GrowLink>
+                      {defect.relatedVersionId ? (
+                        <GrowLink to={`/versions/${defect.relatedVersionId}`}>
+                          {defect.relatedVersionName}
+                        </GrowLink>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">
+                          {defect.relatedVersionName}
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}
@@ -376,6 +431,34 @@ const DefectDetailPage = () => {
           </Card>
         </div>
       </div>
+      <Dialog open={rejectionDialogOpen} onOpenChange={setRejectionDialogOpen}>
+        <DialogContent className="rounded-sm">
+          <DialogHeader>
+            <DialogTitle>填写缺陷驳回原因</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            标记为“已驳回”前，需要明确研发不认可或拒绝修复该缺陷的原因。
+          </p>
+          <Select value={rejectionReason} onValueChange={setRejectionReason}>
+            <SelectTrigger>
+              <SelectValue placeholder="请选择驳回原因" />
+            </SelectTrigger>
+            <SelectContent>
+              {(options.defect_reject_reason || []).map((option) => (
+                <SelectItem key={option} value={option}>{option}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setRejectionDialogOpen(false)}>
+              取消
+            </Button>
+            <Button type="button" onClick={() => void confirmRejection()}>
+              确认驳回
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

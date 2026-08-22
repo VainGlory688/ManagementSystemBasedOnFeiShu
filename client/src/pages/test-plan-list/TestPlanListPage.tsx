@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/pagination';
 
 import { getTestPlanList, createTestPlan, updateTestPlan, deleteTestPlan, type TestPlanListParams } from '@/api/test-plan';
+import { isOptimisticLockConflict } from '../../api/request-error';
 import { getVersionList } from '@/api/version';
 import type { TestPlan, CreateTestPlanDto, UpdateTestPlanDto } from '@shared/api.interface';
 import { toast } from 'sonner';
@@ -56,6 +57,7 @@ const TestPlanListPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const executor = searchParams.get('executor') || undefined;
+  const planningVersionFromUrl = searchParams.get('planningVersion') || '';
 
   const { options: fieldOptions } = useFieldOptions();
   const testStatusOptions = fieldOptions['test_plan_status'] || [];
@@ -67,7 +69,9 @@ const TestPlanListPage = () => {
   const [versionOptions, setVersionOptions] = useState<Array<{ value: string; label: string }>>([]);
   useEffect(() => {
     getVersionList({ pageSize: 200 }).then((res) => {
-      setVersionOptions(res.items.map((v) => ({ value: v.baseRecordId || v.id, label: v.versionName })));
+      setVersionOptions(res.items
+        .map((v) => ({ value: v.baseRecordId || v.id, label: v.versionName }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')));
     }).catch(() => {});
   }, []);
 
@@ -119,7 +123,7 @@ const TestPlanListPage = () => {
     priority: '',
     testPlanType: '',
     businessLine: '',
-    planningVersion: '',
+    planningVersion: planningVersionFromUrl,
   });
   const [keyword, setKeyword] = useState('');
   const [keywordInput, setKeywordInput] = useState('');
@@ -221,13 +225,24 @@ const TestPlanListPage = () => {
       return;
     }
     try {
-      await updateTestPlan(editingItem.id, payload);
+      await updateTestPlan(editingItem.id, {
+        ...payload,
+        expectedUpdatedAt: editingItem.updatedAt,
+      });
       toast.success('测试计划更新成功');
       setDialogOpen(false);
       setEditingItem(null);
       form.reset();
       fetchList();
     } catch (err: unknown) {
+      if (isOptimisticLockConflict(err)) {
+        toast.error('已被其他人修改，请刷新后重试');
+        setDialogOpen(false);
+        setEditingItem(null);
+        form.reset();
+        fetchList();
+        return;
+      }
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || '更新失败';
       toast.error(msg);
     }

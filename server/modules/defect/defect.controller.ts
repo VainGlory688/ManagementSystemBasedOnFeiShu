@@ -27,6 +27,7 @@ export class DefectController {
     @Query('businessLine') businessLine?: string,
     @Query('discoveryEnvironment') discoveryEnvironment?: string,
     @Query('testingStage') testingStage?: string,
+    @Query('planningVersion') planningVersion?: string,
     @Query('currentOwner') currentOwner?: string,
     @Query('keyword') keyword?: string,
   ): Promise<DefectListResponse> {
@@ -41,6 +42,7 @@ export class DefectController {
       businessLine,
       discoveryEnvironment,
       testingStage,
+      planningVersion,
       currentOwner: currentOwner === 'me' ? req.userContext?.userId || '' : currentOwner,
       keyword,
     });

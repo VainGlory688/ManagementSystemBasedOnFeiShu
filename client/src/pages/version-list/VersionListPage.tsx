@@ -40,6 +40,7 @@ import {
   getVersionRequirements,
   getVersionSummary,
 } from '@/api/version';
+import { isOptimisticLockConflict } from '../../api/request-error';
 import type { MainVersion, UpdateVersionDto } from '@shared/api.interface';
 import {
   getPriorityInfo,
@@ -165,13 +166,34 @@ const VersionListPage = () => {
       return;
     }
     try {
-      await updateVersion(editingItem.id, payload);
+      const requiresClosureReadiness = (
+        payload.appStatus !== undefined && ['已结束', '已关闭'].includes(String(payload.appStatus))
+      ) || Boolean(payload.actualReleaseDate);
+      if (requiresClosureReadiness) {
+        const summary = await getVersionSummary(editingItem.id);
+        if (!summary.canClose) {
+          toast.error(`版本尚未满足关闭条件：${summary.closureBlockers.join('；')}`);
+          return;
+        }
+      }
+      await updateVersion(editingItem.id, {
+        ...payload,
+        expectedUpdatedAt: editingItem.updatedAt,
+      });
       toast.success('版本更新成功');
       setDialogOpen(false);
       setEditingItem(null);
       form.reset();
       fetchList();
     } catch (err: unknown) {
+      if (isOptimisticLockConflict(err)) {
+        toast.error('已被其他人修改，请刷新后重试');
+        setDialogOpen(false);
+        setEditingItem(null);
+        form.reset();
+        fetchList();
+        return;
+      }
       const data = (err as { response?: { data?: { error?: { message?: string }; message?: string } } })?.response?.data;
       const msg = data?.error?.message || data?.message || '更新失败';
       toast.error(msg);

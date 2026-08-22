@@ -6,6 +6,7 @@ import { UserDisplay } from '@/components/business-ui/user-display';
 import type { UserInput } from '@/components/business-ui/types/user';
 import { cn } from '@/lib/utils';
 import type { SubRequirementItem, VersionRequirement } from '@shared/api.interface';
+import { resizeGanttEndDate, resizeGanttStartDate, shiftGanttDates } from '@shared/requirement-business-rules';
 
 const DAY_WIDTH = 88;
 const PERSON_WIDTH = 88;
@@ -92,6 +93,8 @@ interface PersonnelGanttChartProps {
   personIds: string[];
   userProfiles: Record<string, UserInput>;
   requirements?: VersionRequirement[];
+  onReschedule?: (item: SubRequirementItem, startDate: string, endDate: string) => void;
+  onDurationChange?: (item: SubRequirementItem, startDate: string, endDate: string) => void;
 }
 
 function getStatusTaskClass(status?: string): string {
@@ -164,6 +167,8 @@ export function PersonnelGanttChart({
   personIds,
   userProfiles,
   requirements,
+  onReschedule,
+  onDurationChange,
 }: PersonnelGanttChartProps) {
   const days = Array.from(
     { length: rangeEnd.diff(rangeStart, 'day') + 1 },
@@ -179,7 +184,22 @@ export function PersonnelGanttChart({
   const timelineWidth = days.length * DAY_WIDTH;
   const today = dayjs().startOf('day');
   const [timelineScrollLeft, setTimelineScrollLeft] = useState(0);
+  const [dragPreview, setDragPreview] = useState<{ id: string; startDate: string; endDate: string } | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ item: SubRequirementItem; startX: number; startDate: Dayjs; endDate: Dayjs } | null>(null);
+  const durationDragRef = useRef<{
+    item: SubRequirementItem;
+    startX: number;
+    startDate: Dayjs;
+    originalEndDate: Dayjs;
+  } | null>(null);
+  const startDurationDragRef = useRef<{
+    item: SubRequirementItem;
+    startX: number;
+    originalStartDate: Dayjs;
+    endDate: Dayjs;
+  } | null>(null);
+  const suppressLinkRef = useRef(false);
   const rowLayouts = rows.map((row) => {
     const contentHeight = row.parentGroups.reduce(
       (height, group) => height + group.laneCount * PARENT_HEIGHT + (group.laneCount - 1) * ROW_GAP,
@@ -297,8 +317,189 @@ export function PersonnelGanttChart({
                   return (
                     <div key={group.key}>
                       {group.tasks.map(({ item, startIndex, duration, lane }) => (
-                        <Link key={item.id} to={`/sub-requirements/${item.id}`} title={item.appSubRequirementName} className={cn('absolute z-[2] flex items-center overflow-hidden rounded-sm border border-t-[3px] px-2 text-xs font-medium transition-opacity hover:opacity-80', getStatusTaskClass(item.appStatus), getPriorityTopBorderClass(item.appPriority || '待定'))} style={{ left: startIndex * DAY_WIDTH + 6, top: top + lane * LANE_STRIDE + (PARENT_HEIGHT - TASK_HEIGHT) / 2, width: item.appExpectedEndDate ? Math.max(duration * DAY_WIDTH - 12, DAY_WIDTH - 12) : 18, height: TASK_HEIGHT }}>
+                        <Link
+                          key={item.id}
+                          to={`/sub-requirements/${item.id}`}
+                          draggable={false}
+                          title={item.appSubRequirementName}
+                          className={cn(
+                            'absolute z-[2] flex items-center overflow-hidden rounded-sm border border-t-[3px] px-2 text-xs font-medium transition-opacity hover:opacity-80',
+                            onReschedule && item.appExpectedStartDate && item.appExpectedEndDate && 'cursor-ew-resize',
+                            getStatusTaskClass(item.appStatus),
+                            getPriorityTopBorderClass(item.appPriority || '待定'),
+                          )}
+                          style={{
+                            left: (dragPreview?.id === item.id
+                              ? Math.max(0, dayjs(dragPreview.startDate).diff(rangeStart, 'day'))
+                              : startIndex) * DAY_WIDTH + 6,
+                            top: top + lane * LANE_STRIDE + (PARENT_HEIGHT - TASK_HEIGHT) / 2,
+                            width: item.appExpectedEndDate ? Math.max(
+                              (dragPreview?.id === item.id
+                                ? dayjs(dragPreview.endDate).diff(dayjs(dragPreview.startDate), 'day') + 1
+                                : duration) * DAY_WIDTH - 12,
+                              DAY_WIDTH - 12,
+                            ) : 18,
+                            height: TASK_HEIGHT,
+                          }}
+                          onPointerDown={(event) => {
+                            if (!onReschedule || !item.appExpectedStartDate || !item.appExpectedEndDate) return;
+                            event.preventDefault();
+                            dragRef.current = {
+                              item,
+                              startX: event.clientX,
+                              startDate: dayjs(item.appExpectedStartDate).startOf('day'),
+                              endDate: dayjs(item.appExpectedEndDate).startOf('day'),
+                            };
+                            event.currentTarget.setPointerCapture(event.pointerId);
+                          }}
+                          onPointerUp={(event) => {
+                            const drag = dragRef.current;
+                            dragRef.current = null;
+                            if (!drag) return;
+                            const dayDelta = Math.round((event.clientX - drag.startX) / DAY_WIDTH);
+                            if (dayDelta === 0) { setDragPreview(null); return; }
+                            suppressLinkRef.current = true;
+                            const nextDates = shiftGanttDates(
+                              drag.startDate.format('YYYY-MM-DD'),
+                              drag.endDate.format('YYYY-MM-DD'),
+                              dayDelta,
+                            );
+                            onReschedule?.(
+                              drag.item,
+                              nextDates.startDate,
+                              nextDates.endDate,
+                            );
+                            setDragPreview(null);
+                          }}
+                          onPointerMove={(event) => {
+                            const drag = dragRef.current;
+                            if (!drag) return;
+                            if (Math.abs(event.clientX - drag.startX) > 2) suppressLinkRef.current = true;
+                            const nextDates = shiftGanttDates(
+                              drag.startDate.format('YYYY-MM-DD'),
+                              drag.endDate.format('YYYY-MM-DD'),
+                              Math.round((event.clientX - drag.startX) / DAY_WIDTH),
+                            );
+                            setDragPreview({ id: drag.item.id, ...nextDates });
+                          }}
+                          onPointerCancel={() => { dragRef.current = null; setDragPreview(null); }}
+                          onDragStart={(event) => event.preventDefault()}
+                          onClick={(event) => {
+                            if (suppressLinkRef.current) {
+                              event.preventDefault();
+                              suppressLinkRef.current = false;
+                            }
+                          }}
+                        >
+                          {item.appExpectedStartDate && item.appExpectedEndDate && onDurationChange && (
+                            <div
+                              role="slider"
+                              aria-label={`调整 ${item.appSubRequirementName} 的预计开始日期`}
+                              aria-orientation="horizontal"
+                              tabIndex={0}
+                              className="absolute inset-y-0 left-0 flex w-3 cursor-col-resize items-center justify-center border-r border-current/40 bg-card/70 opacity-80 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset"
+                              onPointerDown={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                startDurationDragRef.current = {
+                                  item,
+                                  startX: event.clientX,
+                                  originalStartDate: dayjs(item.appExpectedStartDate).startOf('day'),
+                                  endDate: dayjs(item.appExpectedEndDate).startOf('day'),
+                                };
+                                event.currentTarget.setPointerCapture(event.pointerId);
+                              }}
+                              onPointerUp={(event) => {
+                                const drag = startDurationDragRef.current;
+                                startDurationDragRef.current = null;
+                                if (!drag) return;
+                                const dayDelta = Math.round((event.clientX - drag.startX) / DAY_WIDTH);
+                                if (dayDelta === 0) { setDragPreview(null); return; }
+                                const nextDates = resizeGanttStartDate(
+                                  drag.originalStartDate.format('YYYY-MM-DD'),
+                                  drag.endDate.format('YYYY-MM-DD'),
+                                  dayDelta,
+                                );
+                                if (!nextDates) return;
+                                suppressLinkRef.current = true;
+                                onDurationChange(drag.item, nextDates.startDate, nextDates.endDate);
+                                setDragPreview(null);
+                              }}
+                              onPointerMove={(event) => {
+                                const drag = startDurationDragRef.current;
+                                if (!drag) return;
+                                if (Math.abs(event.clientX - drag.startX) > 2) suppressLinkRef.current = true;
+                                const nextDates = resizeGanttStartDate(
+                                  drag.originalStartDate.format('YYYY-MM-DD'),
+                                  drag.endDate.format('YYYY-MM-DD'),
+                                  Math.round((event.clientX - drag.startX) / DAY_WIDTH),
+                                );
+                                setDragPreview(nextDates
+                                  ? { id: drag.item.id, ...nextDates }
+                                  : { id: drag.item.id, startDate: drag.originalStartDate.format('YYYY-MM-DD'), endDate: drag.endDate.format('YYYY-MM-DD') });
+                              }}
+                              onPointerCancel={() => { startDurationDragRef.current = null; setDragPreview(null); }}
+                            >
+                              <span aria-hidden="true" className="h-3 w-px bg-current" />
+                            </div>
+                          )}
                           <span className="truncate">↳ {item.appSubRequirementName}</span>
+                          {item.appExpectedStartDate && item.appExpectedEndDate && onDurationChange && (
+                            <div
+                              role="slider"
+                              aria-label={`调整 ${item.appSubRequirementName} 的预计结束日期`}
+                              aria-orientation="horizontal"
+                              tabIndex={0}
+                              className="absolute inset-y-0 right-0 flex w-3 cursor-col-resize items-center justify-center border-l border-current/40 bg-card/70 opacity-80 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset"
+                              onPointerDown={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                durationDragRef.current = {
+                                  item,
+                                  startX: event.clientX,
+                                  startDate: dayjs(item.appExpectedStartDate).startOf('day'),
+                                  originalEndDate: dayjs(item.appExpectedEndDate).startOf('day'),
+                                };
+                                event.currentTarget.setPointerCapture(event.pointerId);
+                              }}
+                              onPointerUp={(event) => {
+                                const drag = durationDragRef.current;
+                                durationDragRef.current = null;
+                                if (!drag) return;
+                                const dayDelta = Math.round((event.clientX - drag.startX) / DAY_WIDTH);
+                                if (dayDelta === 0) { setDragPreview(null); return; }
+                                const nextDates = resizeGanttEndDate(
+                                  drag.startDate.format('YYYY-MM-DD'),
+                                  drag.originalEndDate.format('YYYY-MM-DD'),
+                                  dayDelta,
+                                );
+                                if (!nextDates) return;
+                                suppressLinkRef.current = true;
+                                onDurationChange(
+                                  drag.item,
+                                  nextDates.startDate,
+                                  nextDates.endDate,
+                                );
+                                setDragPreview(null);
+                              }}
+                              onPointerMove={(event) => {
+                                const drag = durationDragRef.current;
+                                if (!drag) return;
+                                if (Math.abs(event.clientX - drag.startX) > 2) suppressLinkRef.current = true;
+                                const nextDates = resizeGanttEndDate(
+                                  drag.startDate.format('YYYY-MM-DD'),
+                                  drag.originalEndDate.format('YYYY-MM-DD'),
+                                  Math.round((event.clientX - drag.startX) / DAY_WIDTH),
+                                );
+                                setDragPreview(nextDates
+                                  ? { id: drag.item.id, ...nextDates }
+                                  : { id: drag.item.id, startDate: drag.startDate.format('YYYY-MM-DD'), endDate: drag.originalEndDate.format('YYYY-MM-DD') });
+                              }}
+                              onPointerCancel={() => { durationDragRef.current = null; setDragPreview(null); }}
+                            >
+                              <span aria-hidden="true" className="h-3 w-px bg-current" />
+                            </div>
+                          )}
                         </Link>
                       ))}
                     </div>

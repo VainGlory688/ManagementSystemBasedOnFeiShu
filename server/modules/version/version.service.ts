@@ -203,29 +203,52 @@ export class VersionService {
 
   async getSummary(versionId: string): Promise<VersionSummary> {
     const version = await this.getDetail(versionId);
+    const versionRecordId = version.baseRecordId || version.id;
+    const relatedRequirements = await this.db
+      .select({
+        id: versionRequirement.id,
+        baseRecordId: versionRequirement.baseRecordId,
+      })
+      .from(versionRequirement)
+      .where(eq(versionRequirement.planningVersion, versionRecordId));
+    const parentRequirementIds = [...new Set(
+      relatedRequirements.flatMap((requirement) =>
+        [requirement.id, requirement.baseRecordId].filter(
+          (id): id is string => Boolean(id),
+        ),
+      ),
+    )];
 
-    const [testCount, reqCount, defectRows] = await Promise.all([
+    const [testCount, reqCount, defectRows, closureBlockers] = await Promise.all([
       this.db
         .select({ count: count() })
         .from(testPlan)
         .where(
           or(
-            sql`${testPlan.relatedVersion}::text LIKE '%' || ${version.baseRecordId || version.id} || '%'`,
+            sql`${testPlan.relatedVersion}::text LIKE '%' || ${versionRecordId} || '%'`,
             sql`${testPlan.relatedVersion}::text LIKE '%' || ${version.versionName} || '%'`,
           ),
         ),
       this.db
         .select({ count: count() })
         .from(versionRequirement)
-        .where(eq(versionRequirement.planningVersion, version.baseRecordId || version.id)),
-      this.db
-        .select({
-          severity: defectItem.severity,
-          count: count(),
-        })
-        .from(defectItem)
-        .where(sql`${defectItem.testingStage} IS NOT NULL`)
-        .groupBy(defectItem.severity),
+        .where(eq(versionRequirement.planningVersion, versionRecordId)),
+      parentRequirementIds.length === 0
+        ? Promise.resolve([])
+        : this.db
+            .select({
+              severity: defectItem.severity,
+              count: count(),
+            })
+            .from(defectItem)
+            .where(
+              or(...parentRequirementIds.map((requirementId) =>
+                sql`${defectItem.appParentOrder} -> 'link_record_ids'
+                  @> jsonb_build_array(${requirementId}::text)`,
+              )),
+            )
+            .groupBy(defectItem.severity),
+      this.getClosureBlockers(version),
     ]);
 
     const defectBySeverity: DefectSeverityStat[] = defectRows.map((r) => ({
@@ -238,6 +261,8 @@ export class VersionService {
       testPlanCount: Number(testCount[0]?.count ?? 0),
       defectCount,
       defectBySeverity,
+      canClose: closureBlockers.length === 0,
+      closureBlockers,
     };
   }
 
@@ -270,6 +295,13 @@ export class VersionService {
   async update(id: string, dto: UpdateVersionDto, userId: string): Promise<MainVersion> {
     const version = await this.getDetail(id);
     if (dto.versionName !== undefined) requireName(dto.versionName, '版本名称');
+    const isClosing = dto.appStatus !== undefined && ['已结束', '已关闭'].includes(dto.appStatus);
+    if (isClosing || Boolean(dto.actualReleaseDate)) {
+      const blockers = await this.getClosureBlockers(version);
+      if (blockers.length > 0) {
+        throw new BadRequestException(`版本尚未满足关闭条件：${blockers.join('；')}`);
+      }
+    }
 
     const setParts: any[] = [];
     if (dto.versionName !== undefined) setParts.push(sql`version_name = ${dto.versionName}`);
@@ -307,6 +339,85 @@ export class VersionService {
       throw new ConflictException('版本已被其他人修改，请刷新后重试');
     }
     return this.getDetail(rows[0].id);
+  }
+
+  private async getClosureBlockers(version: MainVersion): Promise<string[]> {
+    const versionRecordId = version.baseRecordId || version.id;
+    const relatedRequirements = await this.db
+      .select({
+        id: versionRequirement.id,
+        baseRecordId: versionRequirement.baseRecordId,
+      })
+      .from(versionRequirement)
+      .where(eq(versionRequirement.planningVersion, versionRecordId));
+    const parentRequirementIds = [...new Set(
+      relatedRequirements.flatMap((requirement) =>
+        [requirement.id, requirement.baseRecordId].filter(
+          (value): value is string => Boolean(value),
+        ),
+      ),
+    )];
+
+    const [subItems, plans, defects] = await Promise.all([
+      parentRequirementIds.length === 0
+        ? Promise.resolve([])
+        : this.db
+            .select({
+              appParentWorkItem: subRequirementItem.appParentWorkItem,
+              appStatus: subRequirementItem.appStatus,
+              appExpectedEndDate: subRequirementItem.appExpectedEndDate,
+            })
+            .from(subRequirementItem)
+            .where(
+              or(...parentRequirementIds.map((requirementId) =>
+                sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
+                  @> jsonb_build_array(${requirementId}::text)`,
+              )),
+            ),
+      this.db
+        .select({ testStatus: testPlan.testStatus })
+        .from(testPlan)
+        .where(
+          or(
+            sql`${testPlan.relatedVersion}::text LIKE '%' || ${versionRecordId} || '%'`,
+            sql`${testPlan.relatedVersion}::text LIKE '%' || ${version.versionName} || '%'`,
+          ),
+        ),
+      parentRequirementIds.length === 0
+        ? Promise.resolve([])
+        : this.db
+            .select({ status: defectItem.status })
+            .from(defectItem)
+            .where(
+              or(...parentRequirementIds.map((requirementId) =>
+                sql`${defectItem.appParentOrder} -> 'link_record_ids'
+                  @> jsonb_build_array(${requirementId}::text)`,
+              )),
+            ),
+    ]);
+
+    const subItemsByParent = new Map<string, typeof subItems>();
+    for (const subItem of subItems) {
+      for (const parentId of extractParentRecordIds(subItem.appParentWorkItem)) {
+        subItemsByParent.set(parentId, [...(subItemsByParent.get(parentId) || []), subItem]);
+      }
+    }
+    const incompleteRequirementCount = relatedRequirements.filter((requirement) =>
+      calculateRequirementStatus(
+        subItemsByParent.get(requirement.baseRecordId || requirement.id)
+        || subItemsByParent.get(requirement.id)
+        || [],
+      ) !== '已完成').length;
+    const openDefectCount = defects.filter(
+      (defect) => !['已关闭', '已驳回'].includes(defect.status || ''),
+    ).length;
+    const activeTestPlanCount = plans.filter((plan) => plan.testStatus !== '已完成').length;
+
+    return [
+      incompleteRequirementCount > 0 ? `${incompleteRequirementCount} 个需求未完成` : '',
+      openDefectCount > 0 ? `${openDefectCount} 个缺陷未关闭` : '',
+      activeTestPlanCount > 0 ? `${activeTestPlanCount} 个测试计划未完成` : '',
+    ].filter(Boolean);
   }
 
   async delete(id: string): Promise<void> {

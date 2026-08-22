@@ -4,7 +4,9 @@ import type {
   WorkbenchOverview,
   MyRequirementListResponse,
   MyDefectListResponse,
+  MyTestPlanListResponse,
   MyVersionListResponse,
+  MyBlockedSubRequirementListResponse,
 } from '@shared/api.interface';
 
 export async function getWorkbenchOverview(): Promise<WorkbenchOverview> {
@@ -56,6 +58,22 @@ export async function getMyDefects(
   }
 }
 
+export async function getMyTestPlans(
+  page = 1,
+  pageSize = 10,
+): Promise<MyTestPlanListResponse> {
+  try {
+    const response = await axiosForBackend({
+      url: `/api/workbench/my-test-plans?page=${page}&pageSize=${pageSize}`,
+      method: 'GET',
+    });
+    return response.data;
+  } catch (error) {
+    logger.error('获取我的测试计划失败', error);
+    throw error;
+  }
+}
+
 export async function getMyVersions(
   page = 1,
   pageSize = 10,
@@ -69,6 +87,22 @@ export async function getMyVersions(
     return response.data;
   } catch (error) {
     logger.error('获取我的版本失败', error);
+    throw error;
+  }
+}
+
+export async function getMyBlockedSubRequirements(
+  page = 1,
+  pageSize = 10,
+): Promise<MyBlockedSubRequirementListResponse> {
+  try {
+    const response = await axiosForBackend({
+      url: `/api/workbench/my-blocked-sub-requirements?page=${page}&pageSize=${pageSize}`,
+      method: 'GET',
+    });
+    return response.data;
+  } catch (error) {
+    logger.error('获取我被阻塞的子需求失败', error);
     throw error;
   }
 }

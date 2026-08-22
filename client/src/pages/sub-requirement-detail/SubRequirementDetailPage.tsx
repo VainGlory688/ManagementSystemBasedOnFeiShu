@@ -3,11 +3,19 @@ import { Link, useParams } from 'react-router-dom';
 import { ChevronRight, FileText, Loader2 } from 'lucide-react';
 import { logger } from '@lark-apaas/client-toolkit/logger';
 
-import { getSubRequirementDetail, updateSubRequirement } from '@/api/sub-requirement';
+import {
+  getSubRequirementDetail,
+  getSubRequirementList,
+  updateSubRequirement,
+} from '@/api/sub-requirement';
+import { getRequirementDetail } from '@/api/requirement';
+import { isOptimisticLockConflict } from '../../api/request-error';
 import { UserDisplay } from '@/components/business-ui/user-display';
 import { UserSelect } from '@/components/business-ui/user-select';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { InlineEditableField } from '@/components/InlineEditableField';
@@ -15,6 +23,7 @@ import { DirectSelectField } from '@/components/DirectSelectField';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 import { cn } from '@/lib/utils';
 import type { SubRequirementItem, UpdateSubRequirementDto } from '@shared/api.interface';
+import { getIncompletePipelinePredecessorIds } from '../../../../shared/requirement-business-rules';
 import { toast } from 'sonner';
 
 function getStatusBadgeClass(status: string): string {
@@ -71,15 +80,21 @@ const SubRequirementDetailPage = () => {
   const [loading, setLoading] = useState(true);
   const { options } = useFieldOptions();
   const saveQueueRef = useRef(Promise.resolve());
+  const updatedAtRef = useRef<string | undefined>(undefined);
+  const [completionBlockers, setCompletionBlockers] = useState<string[]>([]);
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     setLoading(true);
+    updatedAtRef.current = undefined;
 
     getSubRequirementDetail(id)
       .then((data) => {
-        if (!cancelled) setDetail(data);
+        if (!cancelled) {
+          updatedAtRef.current = data.updatedAt;
+          setDetail(data);
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) logger.error('加载子需求详情失败', error);
@@ -114,17 +129,63 @@ const SubRequirementDetailPage = () => {
       try {
         const updated = await updateSubRequirement(
           subRequirementId,
-          { [field]: value } as unknown as UpdateSubRequirementDto,
+          {
+            [field]: value,
+            expectedUpdatedAt: updatedAtRef.current,
+          } as unknown as UpdateSubRequirementDto,
         );
+        updatedAtRef.current = updated.updatedAt;
         setDetail(updated);
       } catch (err) {
         logger.error('更新子需求字段失败', err);
-        toast.error('保存子需求字段失败，请稍后重试');
+        toast.error(
+          isOptimisticLockConflict(err)
+            ? '子需求已被其他人修改，请刷新页面后再编辑'
+            : '保存子需求字段失败，请稍后重试',
+        );
         throw err;
       }
     });
     saveQueueRef.current = save;
     return save;
+  };
+
+  const handleStatusChange = async (status: string) => {
+    if (
+      ['已完成', '已上线'].includes(status)
+      && !['已完成', '已上线'].includes(detail.appStatus)
+      && detail.appParentWorkItemRecordId
+    ) {
+      try {
+        const [requirement, subRequirements] = await Promise.all([
+          getRequirementDetail(detail.appParentWorkItemRecordId),
+          getSubRequirementList({ page: 1, pageSize: 1000 }),
+        ]);
+        const siblings = subRequirements.items.filter((item) =>
+          item.appParentWorkItemRecordId === detail.appParentWorkItemRecordId
+          || item.appParentWorkItemRecordId === requirement.baseRecordId
+          || item.appParentWorkItemRecordId === requirement.id,
+        );
+        const blockerIds = getIncompletePipelinePredecessorIds(
+          detail.baseRecordId || detail.id,
+          siblings.map((item) => ({ id: item.baseRecordId || item.id, status: item.appStatus })),
+          requirement.pipeline?.edges || [],
+        );
+        if (blockerIds.length > 0) {
+          const nameById = new Map(siblings.map((item) => [
+            item.baseRecordId || item.id,
+            item.appSubRequirementName,
+          ]));
+          setCompletionBlockers(blockerIds.map((blockerId) =>
+            nameById.get(blockerId) || '未命名前置子需求'));
+          return;
+        }
+      } catch {
+        toast.error('无法校验前置子需求状态，请稍后重试');
+        return;
+      }
+    }
+    await saveField('appStatus', status);
   };
 
   const parentLink = detail.appParentWorkItemRecordId
@@ -156,7 +217,7 @@ const SubRequirementDetailPage = () => {
         <DirectSelectField
           value={detail.appStatus}
           options={options.sub_req_status || []}
-          onChange={(value) => saveField('appStatus', value)}
+          onChange={handleStatusChange}
         >
           <Badge className={cn('h-[22px] px-2.5 text-[11px] font-medium rounded-full', getStatusBadgeClass(detail.appStatus))}>{detail.appStatus || '-'}</Badge>
         </DirectSelectField>
@@ -209,6 +270,20 @@ const SubRequirementDetailPage = () => {
           </div>
         </CardContent>
       </Card>
+      <Dialog open={completionBlockers.length > 0} onOpenChange={(open) => !open && setCompletionBlockers([])}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>无法完成子需求</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">请先完成以下前置子需求，再将当前节点标记为已完成：</p>
+          <ul className="space-y-1 rounded-sm border border-severity-fatal/30 bg-severity-fatal-bg p-3 text-sm text-severity-fatal">
+            {completionBlockers.map((name) => <li key={name}>• {name}</li>)}
+          </ul>
+          <div className="flex justify-end">
+            <Button type="button" onClick={() => setCompletionBlockers([])}>我知道了</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Card className="rounded-sm shadow-none border border-border">
         <CardContent className="p-5">

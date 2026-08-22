@@ -6,6 +6,7 @@ import dayjs, { type Dayjs } from 'dayjs';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -14,6 +15,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
+import { getSubRequirementDetail, updateSubRequirement } from '@/api/sub-requirement';
+import { isOptimisticLockConflict } from '../../api/request-error';
+import { toast } from 'sonner';
 import type {
   MainVersion,
   RequirementListResponse,
@@ -59,6 +63,13 @@ const RequirementGanttPage = () => {
   const [filterRequirementType, setFilterRequirementType] = useState('all');
   const [view, setView] = useState<GanttView>('month');
   const [currentDate, setCurrentDate] = useState(() => dayjs());
+  const [pendingReschedule, setPendingReschedule] = useState<{
+    item: SubRequirementItem;
+    startDate: string;
+    endDate: string;
+    mode: 'move' | 'extend';
+  } | null>(null);
+  const [savingReschedule, setSavingReschedule] = useState(false);
   const { options: fieldOptions } = useFieldOptions();
 
   useEffect(() => {
@@ -76,7 +87,8 @@ const RequirementGanttPage = () => {
         const verData: VersionListResponse = verRes.data;
         setRequirements(reqData.items ?? []);
         setSubRequirements(subData.items ?? []);
-        setVersions(verData.items ?? []);
+          setVersions([...(verData.items ?? [])].sort((a, b) =>
+            a.versionName.localeCompare(b.versionName, 'zh-CN')));
       } catch (loadError) {
         if (!cancelled) {
           logger.error('加载需求甘特图数据失败', loadError);
@@ -109,6 +121,39 @@ const RequirementGanttPage = () => {
     });
   };
 
+  const confirmReschedule = async () => {
+    if (!pendingReschedule) return;
+    setSavingReschedule(true);
+    try {
+      const updated = await updateSubRequirement(pendingReschedule.item.id, {
+        appExpectedStartDate: pendingReschedule.startDate,
+        appExpectedEndDate: pendingReschedule.endDate,
+        expectedUpdatedAt: pendingReschedule.item.updatedAt,
+      });
+      setSubRequirements((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setPendingReschedule(null);
+      toast.success('子需求排期已更新');
+    } catch (saveError) {
+      if (isOptimisticLockConflict(saveError)) {
+        try {
+          const freshItem = await getSubRequirementDetail(pendingReschedule.item.id);
+          setSubRequirements((items) => items.map((item) => item.id === freshItem.id ? freshItem : item));
+          setPendingReschedule((pending) => pending?.item.id === freshItem.id
+            ? { ...pending, item: freshItem }
+            : pending);
+          toast.info('子需求已被其他人修改，已刷新最新数据，请核对后重新确认');
+        } catch (refreshError) {
+          logger.error('刷新冲突子需求失败', refreshError);
+          toast.error('子需求已被其他人修改，且最新数据加载失败，请稍后刷新页面后重试');
+        }
+      } else {
+        toast.error('保存子需求排期失败，请稍后重试');
+      }
+    } finally {
+      setSavingReschedule(false);
+    }
+  };
+
   if (loading) {
     return <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">加载中...</div>;
   }
@@ -122,6 +167,7 @@ const RequirementGanttPage = () => {
       <div>
         <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground">需求排期甘特图</h1>
         <p className="mt-1 text-sm text-muted-foreground">按父需求分组查看子需求排期，支持版本、业务线与时间范围筛选</p>
+        <p className="mt-1 text-xs text-muted-foreground">拖动子需求条可整体改期；拖动右侧手柄仅调整结束日期。确认前不会保存，未设置完整起止日期的任务不可拖动。</p>
       </div>
 
       <div className="rounded-sm border border-border bg-card p-3">
@@ -215,9 +261,38 @@ const RequirementGanttPage = () => {
             rangeEnd={range.end}
             requirements={filteredRequirements}
             subRequirements={subRequirements}
+            onReschedule={(item, startDate, endDate) => setPendingReschedule({ item, startDate, endDate, mode: 'move' })}
+            onDurationChange={(item, startDate, endDate) => setPendingReschedule({ item, startDate, endDate, mode: 'extend' })}
           />
         </CardContent>
       </Card>
+
+      <Dialog open={pendingReschedule !== null} onOpenChange={(open) => !open && !savingReschedule && setPendingReschedule(null)}>
+        <DialogContent className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>{pendingReschedule?.mode === 'extend' ? '确认调整子需求工期' : '确认调整子需求排期'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <p className="font-medium text-foreground">{pendingReschedule?.item.appSubRequirementName}</p>
+            <p className="text-muted-foreground">
+              {pendingReschedule?.item.appExpectedStartDate.slice(0, 10)} 至 {pendingReschedule?.item.appExpectedEndDate.slice(0, 10)}
+              {' → '}
+              <span className="font-mono text-foreground">{pendingReschedule?.startDate} 至 {pendingReschedule?.endDate}</span>
+            </p>
+            <p className="border-l-2 border-warning bg-[hsl(38_70%_93%)] px-3 py-2 text-xs text-[hsl(38_75%_30%)]">
+              {pendingReschedule?.mode === 'extend'
+                ? '将保持开始日期与负责人不变，仅调整预计结束日期，最短工期为 1 天。确认前不会写入数据。'
+                : '将保持工期不变，仅整体移动开始和结束日期。确认前不会写入数据。'}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={savingReschedule} onClick={() => setPendingReschedule(null)}>取消</Button>
+            <Button disabled={savingReschedule} onClick={() => void confirmReschedule()}>
+              {savingReschedule ? '保存中…' : '确认改期'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

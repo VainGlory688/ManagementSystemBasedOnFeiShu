@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GitBranch, RotateCcw, Save, Sparkles, Trash2 } from 'lucide-react';
+import { AlertTriangle, GitBranch, RotateCcw, Save, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { updateRequirementPipeline } from '@/api/requirement';
+import { isOptimisticLockConflict } from '../../api/request-error';
+import { getBlockedPipelineNodeIds } from '@shared/requirement-business-rules';
 import type {
   RequirementPipelineConfig,
   RequirementPipelineEdge,
@@ -18,6 +21,7 @@ interface Point {
 
 interface RequirementPipelineProps {
   requirementId: string;
+  expectedUpdatedAt: string;
   items: SubRequirementItem[];
   pipeline?: RequirementPipelineConfig;
   onSaved: (pipeline: RequirementPipelineConfig) => void;
@@ -75,6 +79,58 @@ function getValidEdges(
     seen.add(key);
     return true;
   });
+}
+
+function getDurationDays(item: SubRequirementItem): number {
+  if (!item.appExpectedStartDate || !item.appExpectedEndDate) return 1;
+  const start = new Date(item.appExpectedStartDate).getTime();
+  const end = new Date(item.appExpectedEndDate).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) return 1;
+  return Math.max(1, Math.floor((end - start) / 86_400_000) + 1);
+}
+
+function getCriticalPath(
+  items: SubRequirementItem[],
+  edges: RequirementPipelineEdge[],
+): { nodeIds: Set<string>; edgeIds: Set<string> } {
+  const ids = items.map(getNodeId);
+  const itemById = new Map(items.map((item) => [getNodeId(item), item]));
+  if (ids.length === 0) return { nodeIds: new Set(), edgeIds: new Set() };
+  const validEdges = edges.filter((edge) =>
+    itemById.has(edge.source) && itemById.has(edge.target) && edge.source !== edge.target,
+  );
+  const incoming = new Map(ids.map((id) => [id, 0]));
+  const outgoing = new Map(ids.map((id) => [id, [] as string[]]));
+  for (const edge of validEdges) {
+    incoming.set(edge.target, (incoming.get(edge.target) || 0) + 1);
+    outgoing.get(edge.source)?.push(edge.target);
+  }
+  const distance = new Map(ids.map((id) => [id, getDurationDays(itemById.get(id)!)]));
+  const predecessor = new Map<string, string>();
+  const queue = ids.filter((id) => incoming.get(id) === 0);
+  for (let index = 0; index < queue.length; index += 1) {
+    const source = queue[index];
+    for (const target of outgoing.get(source) || []) {
+      const nextDistance = (distance.get(source) || 0) + getDurationDays(itemById.get(target)!);
+      if (nextDistance > (distance.get(target) || 0)) {
+        distance.set(target, nextDistance);
+        predecessor.set(target, source);
+      }
+      incoming.set(target, (incoming.get(target) || 1) - 1);
+      if (incoming.get(target) === 0) queue.push(target);
+    }
+  }
+  const terminal = ids.reduce((longest, id) => (
+    (distance.get(id) || 0) > (distance.get(longest) || 0) ? id : longest
+  ), ids[0]);
+  const nodeIds = new Set<string>();
+  const edgeIds = new Set<string>();
+  for (let current = terminal; current; current = predecessor.get(current) || '') {
+    nodeIds.add(current);
+    const previous = predecessor.get(current);
+    if (previous) edgeIds.add(`${previous}:${current}`);
+  }
+  return { nodeIds, edgeIds };
 }
 
 function buildPositions(items: SubRequirementItem[], edges: RequirementPipelineEdge[]): Record<string, Point> {
@@ -179,7 +235,13 @@ function getEdgePath(
   return `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX} ${endY}`;
 }
 
-const RequirementPipeline = ({ requirementId, items, pipeline, onSaved }: RequirementPipelineProps) => {
+const RequirementPipeline = ({
+  requirementId,
+  expectedUpdatedAt,
+  items,
+  pipeline,
+  onSaved,
+}: RequirementPipelineProps) => {
   const initialEdges = useMemo(() => getValidEdges(pipeline, items), [items, pipeline]);
   const [edges, setEdges] = useState<RequirementPipelineEdge[]>(initialEdges);
   const [savedEdges, setSavedEdges] = useState<RequirementPipelineEdge[]>(initialEdges);
@@ -262,24 +324,38 @@ const RequirementPipeline = ({ requirementId, items, pipeline, onSaved }: Requir
   const save = useCallback(async () => {
     setSaving(true);
     try {
-      const nextPipeline = await updateRequirementPipeline(requirementId, { edges });
+      const nextPipeline = await updateRequirementPipeline(requirementId, {
+        edges,
+        expectedUpdatedAt,
+      });
       const nextEdges = getValidEdges(nextPipeline, items);
       setEdges(nextEdges);
       setSavedEdges(nextEdges);
       onSaved(nextPipeline);
       toast.success('流水线配置已保存');
-    } catch {
-      toast.error('流水线保存失败，请稍后重试');
+    } catch (error) {
+      toast.error(
+        isOptimisticLockConflict(error)
+          ? '需求已被其他人修改，请刷新页面后重新配置流水线'
+          : '流水线保存失败，请稍后重试',
+      );
     } finally {
       setSaving(false);
     }
-  }, [edges, items, onSaved, requirementId]);
+  }, [edges, expectedUpdatedAt, items, onSaved, requirementId]);
 
   const serializeEdges = (itemsToSerialize: RequirementPipelineEdge[]) =>
     JSON.stringify([...itemsToSerialize].sort((a, b) =>
       `${a.source}:${a.target}`.localeCompare(`${b.source}:${b.target}`),
     ));
   const changed = serializeEdges(edges) !== serializeEdges(savedEdges);
+  const blockedNodeIds = useMemo(() => {
+    return getBlockedPipelineNodeIds(
+      items.map((item) => ({ id: getNodeId(item), status: item.appStatus })),
+      edges,
+    );
+  }, [edges, items]);
+  const criticalPath = useMemo(() => getCriticalPath(items, edges), [edges, items]);
   const longEdgeCount = edges.filter((edge) => {
     const source = positions[edge.source];
     const target = positions[edge.target];
@@ -356,6 +432,7 @@ const RequirementPipeline = ({ requirementId, items, pipeline, onSaved }: Requir
                 const target = positions[edge.target];
                 if (!source || !target) return null;
                 const edgeId = `${edge.source}:${edge.target}`;
+                const isCriticalEdge = criticalPath.edgeIds.has(edgeId);
                 const outgoing = edges
                   .filter((candidate) => candidate.source === edge.source)
                   .sort((a, b) => (positions[a.target]?.y || 0) - (positions[b.target]?.y || 0));
@@ -389,11 +466,12 @@ const RequirementPipeline = ({ requirementId, items, pipeline, onSaved }: Requir
                     d={getEdgePath(source, target, sourceOffset, targetOffset, routeY, useStraightApproach)}
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth={selectedEdge === edgeId ? 3 : 1.5}
+                    strokeWidth={selectedEdge === edgeId || isCriticalEdge ? 3 : 1.5}
                     strokeLinejoin="round"
                     markerEnd="url(#pipeline-arrow)"
                     className={cn(
                       'pointer-events-auto cursor-pointer text-white transition-all',
+                      isCriticalEdge && 'text-warning opacity-100',
                       selectedEdge !== edgeId && 'opacity-70 hover:opacity-100',
                     )}
                     onClick={() => {
@@ -409,6 +487,8 @@ const RequirementPipeline = ({ requirementId, items, pipeline, onSaved }: Requir
               const id = getNodeId(item);
               const position = positions[id];
               if (!position) return null;
+              const isBlocked = blockedNodeIds.has(id);
+              const isCriticalNode = criticalPath.nodeIds.has(id);
               return (
                 <button
                   key={id}
@@ -416,9 +496,20 @@ const RequirementPipeline = ({ requirementId, items, pipeline, onSaved }: Requir
                   className={cn(
                     'absolute flex w-[140px] cursor-grab items-center gap-1.5 rounded-sm border px-2 text-left text-xs shadow-none transition-[border-color,box-shadow] active:cursor-grabbing',
                     getStatusClass(item.appStatus),
+                    isCriticalNode && 'border-warning',
                     selectedSource === id ? 'border-primary ring-2 ring-primary/20' : 'hover:border-primary/60',
                   )}
-                  style={{ transform: `translate(${position.x}px, ${position.y}px)`, height: NODE_HEIGHT }}
+                  title={item.appSubRequirementName || '未命名子需求'}
+                  style={{
+                    transform: `translate(${position.x}px, ${position.y}px)`,
+                    height: NODE_HEIGHT,
+                    ...(isBlocked && {
+                      borderColor: 'hsl(4 75% 52%)',
+                      borderWidth: 2,
+                      outline: '2px solid hsl(4 75% 52% / 0.45)',
+                      outlineOffset: 1,
+                    }),
+                  }}
                   onPointerDown={(event) => {
                     const rect = event.currentTarget.getBoundingClientRect();
                     dragRef.current = {
@@ -434,6 +525,24 @@ const RequirementPipeline = ({ requirementId, items, pipeline, onSaved }: Requir
                   <span className="truncate font-medium">
                     {item.appSubRequirementName || '未命名子需求'}
                   </span>
+                  {isCriticalNode && (
+                    <span className="shrink-0 text-[10px] font-medium text-warning">关键</span>
+                  )}
+                  {isBlocked && (
+                    <TooltipProvider delayDuration={150}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex shrink-0">
+                            <AlertTriangle
+                              className="size-3 text-severity-fatal"
+                              aria-label="存在未完成的前置子需求"
+                            />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">存在未完成的前置子需求</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
                   <span className="ml-auto shrink-0 text-[10px] opacity-75">
                     {item.appStatus || '未处理'}
                   </span>

@@ -3,6 +3,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { UserDisplay } from '@/components/business-ui/user-display';
 import { getPriorityInfo } from '@/utils/version-helpers';
+import { RequirementStatusBadge } from '@/pages/requirement-list/RequirementStatusBadge';
 import type { VersionRequirement } from '@shared/api.interface';
 
 interface RequirementListProps {
@@ -53,6 +54,8 @@ const RequirementList = ({ items, loading }: RequirementListProps) => {
               >
                 {req.appReqName}
               </Link>
+
+              <RequirementStatusBadge status={req.currentStatus} />
 
               <div className="shrink-0">
                 <UserDisplay userId={req.currentOwner} size="small" showLabel={false} />

@@ -5,7 +5,9 @@ import {
   WorkbenchOverview,
   MyRequirementListResponse,
   MyDefectListResponse,
+  MyTestPlanListResponse,
   MyVersionListResponse,
+  MyBlockedSubRequirementListResponse,
 } from '@shared/api.interface';
 import { WorkbenchService } from './workbench.service';
 
@@ -54,6 +56,21 @@ export class WorkbenchController {
   }
 
   @NeedLogin()
+  @Get('my-test-plans')
+  async getMyTestPlans(
+    @Req() req: Request,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ): Promise<MyTestPlanListResponse> {
+    const userId = req.userContext?.userId || '';
+    return this.workbenchService.getMyTestPlans(
+      userId,
+      page ? parseInt(page, 10) : 1,
+      pageSize ? parseInt(pageSize, 10) : 10,
+    );
+  }
+
+  @NeedLogin()
   @Get('my-versions')
   async getMyVersions(
     @Req() req: Request,
@@ -65,5 +82,20 @@ export class WorkbenchController {
     const pageNum = page ? parseInt(page, 10) : 1;
     const sizeNum = pageSize ? parseInt(pageSize, 10) : 10;
     return this.workbenchService.getMyVersions(userId, pageNum, sizeNum, sort);
+  }
+
+  @NeedLogin()
+  @Get('my-blocked-sub-requirements')
+  async getMyBlockedSubRequirements(
+    @Req() req: Request,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ): Promise<MyBlockedSubRequirementListResponse> {
+    const userId = req.userContext?.userId || '';
+    return this.workbenchService.getMyBlockedSubRequirements(
+      userId,
+      page ? parseInt(page, 10) : 1,
+      pageSize ? parseInt(pageSize, 10) : 10,
+    );
   }
 }

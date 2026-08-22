@@ -19,6 +19,7 @@ import {
   getVersionSummary,
   updateVersion,
 } from '@/api/version';
+import { getBackendErrorMessage, isOptimisticLockConflict } from '../../api/request-error';
 import type { MainVersion, UpdateVersionDto, VersionRequirement, VersionSummary } from '@shared/api.interface';
 import {
   buildMilestones,
@@ -43,6 +44,7 @@ const VersionDetailPage = () => {
   const [error, setError] = useState<string | null>(null);
   const { options } = useFieldOptions();
   const saveQueueRef = useRef(Promise.resolve());
+  const updatedAtRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (!id) return;
@@ -51,6 +53,7 @@ const VersionDetailPage = () => {
     const loadAll = async () => {
       setLoading(true);
       setError(null);
+      updatedAtRef.current = undefined;
       try {
         const [v, reqRes, sum] = await Promise.all([
           getVersionDetail(id),
@@ -58,6 +61,7 @@ const VersionDetailPage = () => {
           getVersionSummary(id),
         ]);
         if (cancelled) return;
+        updatedAtRef.current = v.updatedAt;
         setVersion(v);
         setReqList(reqRes.items);
         setSummary(sum);
@@ -86,14 +90,31 @@ const VersionDetailPage = () => {
   const highRisk = version ? isHighRisk(version) : false;
   const saveField = async <K extends keyof MainVersion>(field: K, value: MainVersion[K]) => {
     if (!version) return;
+    const requiresClosureReadiness = (
+      field === 'appStatus' && ['已结束', '已关闭'].includes(String(value))
+    ) || (
+      field === 'actualReleaseDate' && Boolean(value)
+    );
+    if (requiresClosureReadiness && summary && !summary.canClose) {
+      toast.error(`版本尚未满足关闭条件：${summary.closureBlockers.join('；')}`);
+      return;
+    }
     const versionId = version.id;
     const save = saveQueueRef.current.catch(() => undefined).then(async () => {
       try {
-        const updated = await updateVersion(versionId, { [field]: value } as unknown as UpdateVersionDto);
+        const updated = await updateVersion(versionId, {
+          [field]: value,
+          expectedUpdatedAt: updatedAtRef.current,
+        } as unknown as UpdateVersionDto);
+        updatedAtRef.current = updated.updatedAt;
         setVersion(updated);
       } catch (err) {
         logger.error('更新版本字段失败', err);
-        toast.error('保存版本字段失败，请稍后重试');
+        toast.error(
+          isOptimisticLockConflict(err)
+            ? '版本已被其他人修改，请刷新页面后再编辑'
+            : getBackendErrorMessage(err) || '保存版本字段失败，请稍后重试',
+        );
         throw err;
       }
     });
@@ -174,17 +195,28 @@ const VersionDetailPage = () => {
         </div>
 
         {version && (
-          <InlineEditableField
-            value={version.versionRisk || ''}
-            className="mt-3 max-w-3xl"
-            onSave={(value) => saveField('versionRisk', value)}
-            renderEditor={(value, onChange) => <Textarea value={value} rows={3} onChange={(event) => onChange(event.target.value)} />}
-          >
-            <p className="text-sm text-muted-foreground">
-              <span className="font-medium text-foreground/80">风险摘要：</span>
-              {version.versionRisk || '暂无风险摘要'}
-            </p>
-          </InlineEditableField>
+          <div className="mt-3 max-w-3xl space-y-2">
+            <InlineEditableField
+              value={version.versionRisk || ''}
+              onSave={(value) => saveField('versionRisk', value)}
+              renderEditor={(value, onChange) => <Textarea value={value} rows={3} onChange={(event) => onChange(event.target.value)} />}
+            >
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground/80">风险摘要：</span>
+                {version.versionRisk || '暂无风险摘要'}
+              </p>
+            </InlineEditableField>
+            <InlineEditableField
+              value={version.versionDoc || ''}
+              onSave={(value) => saveField('versionDoc', value)}
+              renderEditor={(value, onChange) => <Textarea value={value} rows={3} onChange={(event) => onChange(event.target.value)} />}
+            >
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                <span className="font-medium text-foreground/80">版本文档：</span>
+                {version.versionDoc || '暂无版本文档'}
+              </p>
+            </InlineEditableField>
+          </div>
         )}
       </div>
 
@@ -247,8 +279,7 @@ const VersionDetailPage = () => {
             {id && version && (
               <SummaryCards
                 summary={loading ? null : summary}
-                versionId={id}
-                versionName={version.versionName}
+                versionId={version.baseRecordId || version.id}
               />
             )}
             {loading && (

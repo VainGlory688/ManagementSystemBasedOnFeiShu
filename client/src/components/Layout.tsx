@@ -32,6 +32,7 @@ import {
   BreadcrumbList,
 } from "@/components/ui/breadcrumb";
 import { UserDisplay } from '@/components/business-ui/user-display/user-display';
+import { GlobalSearch } from '@/components/GlobalSearch';
 
 interface NavItem {
   path: string;
@@ -131,6 +132,7 @@ const LayoutContent = () => {
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
+          <GlobalSearch />
         </header>
         <div className="flex-1 overflow-y-auto overflow-x-clip [scrollbar-width:none] [&::-webkit-scrollbar]:hidden min-h-0">
           <Outlet />

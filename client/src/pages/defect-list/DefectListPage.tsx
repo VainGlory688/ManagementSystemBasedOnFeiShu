@@ -26,7 +26,8 @@ import { Badge } from '@/components/ui/badge';
 import { UserDisplay } from '@/components/business-ui/user-display';
 import { cn } from '@/lib/utils';
 
-import { getDefectList, createDefect, updateDefect, deleteDefect } from '@/api/defect';
+import { getDefectDetail, getDefectList, createDefect, updateDefect, deleteDefect } from '@/api/defect';
+import { isOptimisticLockConflict } from '../../api/request-error';
 import type { DefectItem, CreateDefectDto, UpdateDefectDto } from '@shared/api.interface';
 import { toast } from 'sonner';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -39,6 +40,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { UserSelect } from '@/components/business-ui/user-select';
 import { LabelBadge } from '@/components/LabelBadge';
 import { getRequirementList } from '@/api/requirement';
+import { getVersionList } from '@/api/version';
 
 import SortHeader, { type SortKey, type SortDir } from './SortHeader';
 import {
@@ -55,6 +57,9 @@ const DefectListPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const currentOwner = searchParams.get('currentOwner') || undefined;
+  const [planningVersionFilter, setPlanningVersionFilter] = useState(
+    searchParams.get('planningVersion') || '',
+  );
 
   const { options: fieldOptions } = useFieldOptions();
   const severityList = fieldOptions['defect_severity'] || [];
@@ -72,6 +77,8 @@ const DefectListPage = () => {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletingItem, setDeletingItem] = useState<DefectItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [parentOrderKeyword, setParentOrderKeyword] = useState('');
+  const [versionOptions, setVersionOptions] = useState<Array<{ value: string; label: string }>>([]);
 
   const defectSchema = z.object({
     defectName: z.string().min(1, '缺陷名称不能为空'),
@@ -160,13 +167,24 @@ const DefectListPage = () => {
       return;
     }
     try {
-      await updateDefect(editingItem.id, payload);
+      await updateDefect(editingItem.id, {
+        ...payload,
+        expectedUpdatedAt: editingItem.updatedAt,
+      });
       toast.success('缺陷更新成功');
       setDialogOpen(false);
       setEditingItem(null);
       form.reset();
       fetchList();
     } catch (err: unknown) {
+      if (isOptimisticLockConflict(err)) {
+        toast.error('已被其他人修改，请刷新后重试');
+        setDialogOpen(false);
+        setEditingItem(null);
+        form.reset();
+        fetchList();
+        return;
+      }
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || '更新失败';
       toast.error(msg);
     }
@@ -191,6 +209,7 @@ const DefectListPage = () => {
 
   const openCreateDialog = () => {
     setEditingItem(null);
+    setParentOrderKeyword('');
     form.reset({
       defectName: '',
       status: '',
@@ -207,8 +226,9 @@ const DefectListPage = () => {
     setDialogOpen(true);
   };
 
-  const openEditDialog = (item: DefectItem) => {
+  const openEditDialog = async (item: DefectItem) => {
     setEditingItem(item);
+    setParentOrderKeyword(item.appParentOrderName || '');
     form.reset({
       defectName: item.defectName,
       status: item.status || '',
@@ -223,6 +243,26 @@ const DefectListPage = () => {
       appParentOrder: item.appParentOrderRecordId || '',
     });
     setDialogOpen(true);
+    try {
+      const detail = await getDefectDetail(item.id);
+      setEditingItem(detail);
+      form.reset({
+        defectName: detail.defectName,
+        status: detail.status || '',
+        severity: detail.severity || '',
+        priority: detail.priority || '',
+        businessLine: detail.businessLine || '',
+        rejectionReason: detail.rejectionReason || '',
+        discoveryEnvironment: detail.discoveryEnvironment || '',
+        testingStage: detail.testingStage || '',
+        currentOwner: detail.currentOwner || [],
+        detail: detail.detail || '',
+        appParentOrder: detail.appParentOrderRecordId || '',
+      });
+    } catch (error) {
+      logger.error('加载缺陷详情失败', error);
+      toast.error('加载缺陷详情失败');
+    }
   };
 
   const handleSearch = () => {
@@ -276,6 +316,7 @@ const DefectListPage = () => {
     if (businessLineFilter.length === 1) params.businessLine = businessLineFilter[0];
     if (discoveryEnvFilter.length === 1) params.discoveryEnvironment = discoveryEnvFilter[0];
     if (testingStageFilter.length === 1) params.testingStage = testingStageFilter[0];
+    if (planningVersionFilter) params.planningVersion = planningVersionFilter;
     if (currentOwner) params.currentOwner = currentOwner;
     if (keyword) params.keyword = keyword;
 
@@ -309,6 +350,7 @@ const DefectListPage = () => {
     businessLineFilter,
     discoveryEnvFilter,
     testingStageFilter,
+    planningVersionFilter,
     currentOwner,
     keyword,
   ]);
@@ -320,6 +362,22 @@ const DefectListPage = () => {
         if (!cancelled) setParentOrders(response.items);
       })
       .catch((err: unknown) => logger.error('关联父单列表加载失败', err));
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getVersionList({ pageSize: 200 })
+      .then((response) => {
+        if (cancelled) return;
+        setVersionOptions(response.items
+          .map((version) => ({
+            value: version.baseRecordId || version.id,
+            label: version.versionName,
+          }))
+          .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')));
+      })
+      .catch((err: unknown) => logger.error('计划版本列表加载失败', err));
     return () => { cancelled = true; };
   }, []);
 
@@ -337,9 +395,13 @@ const DefectListPage = () => {
     { key: 'testingStage', label: '测试阶段', options: testingStageList, selected: testingStageFilter, setSelected: setTestingStageFilter },
   ];
   const activeFilters = filterConfigs.filter((config) => config.selected.length > 0);
+  const selectedVersionLabel = versionOptions.find(
+    (version) => version.value === planningVersionFilter,
+  )?.label || planningVersionFilter;
 
   const clearAllFilters = () => {
     filterConfigs.forEach((config) => config.setSelected([]));
+    setPlanningVersionFilter('');
     setKeyword('');
     setKeywordInput('');
     setPage(1);
@@ -382,6 +444,28 @@ const DefectListPage = () => {
               </Select>
             </div>
           ))}
+          <div className="flex items-center gap-2">
+            <span className="w-14 shrink-0 text-xs text-muted-foreground">计划版本</span>
+            <Select
+              value={planningVersionFilter}
+              onValueChange={(value: string) => {
+                setPlanningVersionFilter(value);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger size="sm" className="w-[160px] h-8">
+                <SelectValue placeholder="全部" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">全部</SelectItem>
+                {versionOptions.map((version) => (
+                  <SelectItem key={version.value} value={version.value}>
+                    {version.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <Button size="sm" variant="default" onClick={openCreateDialog}>
             新建缺陷
           </Button>
@@ -404,7 +488,7 @@ const DefectListPage = () => {
             <Button type="submit" size="sm" variant="default">搜索</Button>
           </form>
         </div>
-        {activeFilters.length > 0 && (
+        {(activeFilters.length > 0 || planningVersionFilter) && (
           <div className="flex items-center gap-2 flex-wrap mt-3 pt-3 border-t border-border/60">
             <span className="text-xs text-muted-foreground">已选条件：</span>
             {activeFilters.map((config, index) => (
@@ -420,6 +504,21 @@ const DefectListPage = () => {
                 <X className="size-3 text-muted-foreground group-hover:text-destructive transition-colors" />
               </Badge>
             ))}
+            {planningVersionFilter && (
+              <Badge
+                variant="secondary"
+                className="h-[22px] px-2 gap-1 cursor-pointer group animate-grow-in"
+                style={{ animationDelay: `${activeFilters.length * 30}ms` }}
+                onClick={() => {
+                  setPlanningVersionFilter('');
+                  setPage(1);
+                }}
+              >
+                <span className="text-[11px] text-muted-foreground">计划版本:</span>
+                <span className="text-[11px] font-medium">{selectedVersionLabel}</span>
+                <X className="size-3 text-muted-foreground group-hover:text-destructive transition-colors" />
+              </Badge>
+            )}
             <button
               className="ml-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
               onClick={clearAllFilters}
@@ -535,7 +634,13 @@ const DefectListPage = () => {
                         </span>
                       </TableCell>
                       <TableCell className="max-w-[180px] text-sm text-foreground">
-                        <span className="block truncate">{item.appParentOrderName || '-'}</span>
+                        {item.appParentOrderName ? (
+                          <span className="block truncate">{item.appParentOrderName}</span>
+                        ) : (
+                          <Badge variant="outline" className="h-[22px] rounded-full border-border px-2 text-[11px] font-medium text-muted-foreground">
+                            未关联父单
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         <PillBadge text={item.status} variant="status" />
@@ -765,6 +870,12 @@ const DefectListPage = () => {
               <FormField control={form.control} name="appParentOrder" render={({ field }) => (
                 <FormItem>
                   <FormLabel>关联父单</FormLabel>
+                  <Input
+                    value={parentOrderKeyword}
+                    onChange={(event) => setParentOrderKeyword(event.target.value)}
+                    placeholder="搜索需求名称"
+                    className="mb-2"
+                  />
                   <Select
                     value={field.value || '__none__'}
                     onValueChange={(value) => field.onChange(value === '__none__' ? '' : value)}
@@ -772,7 +883,9 @@ const DefectListPage = () => {
                     <FormControl><SelectTrigger><SelectValue placeholder="请选择关联父单" /></SelectTrigger></FormControl>
                     <SelectContent>
                       <SelectItem value="__none__">不关联父单</SelectItem>
-                      {parentOrders.map((parentOrder) => (
+                      {parentOrders
+                        .filter((parentOrder) => parentOrder.appReqName.includes(parentOrderKeyword.trim()))
+                        .map((parentOrder) => (
                         <SelectItem key={parentOrder.id} value={parentOrder.baseRecordId || parentOrder.id}>
                           {parentOrder.appReqName}
                         </SelectItem>

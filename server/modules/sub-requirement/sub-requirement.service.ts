@@ -13,8 +13,13 @@ import {
   SubRequirementItem,
   CreateSubRequirementDto,
   UpdateSubRequirementDto,
+  RequirementPipelineEdge,
 } from '@shared/api.interface';
 import { isValidUuid } from '@server/common/utils/uuid';
+import {
+  getIncompletePipelinePredecessorIds,
+  isCompletedPipelineStatus,
+} from '@shared/requirement-business-rules';
 
 interface ListQuery {
   page: number;
@@ -208,6 +213,18 @@ export class SubRequirementService {
     const nextParent = dto.appParentWorkItem === undefined || !dto.appParentWorkItem
       ? undefined
       : await this.findParentRequirement(dto.appParentWorkItem);
+    if (
+      dto.appStatus !== undefined
+      && isCompletedPipelineStatus(dto.appStatus)
+      && !isCompletedPipelineStatus(existing.appStatus)
+    ) {
+      await this.validateCompletionDependencies(
+        existing,
+        nextParent
+          ? [nextParent.id, nextParent.baseRecordId].filter((value): value is string => Boolean(value))
+          : currentParentIds,
+      );
+    }
     const setParts: any[] = [];
     if (dto.appSubRequirementName !== undefined) setParts.push(sql`app_sub_requirement_name = ${dto.appSubRequirementName}`);
     if (dto.appStatus !== undefined) setParts.push(sql`app_status = ${dto.appStatus || null}`);
@@ -354,6 +371,90 @@ export class SubRequirementService {
       throw new NotFoundException('父需求不存在');
     }
     return parents[0];
+  }
+
+  private async validateCompletionDependencies(
+    item: typeof subRequirementItem.$inferSelect,
+    parentRecordIds: string[],
+  ): Promise<void> {
+    if (parentRecordIds.length === 0) return;
+
+    const parents = await this.db
+      .select({
+        id: versionRequirement.id,
+        baseRecordId: versionRequirement.baseRecordId,
+        subRequirementItem: versionRequirement.subRequirementItem,
+      })
+      .from(versionRequirement)
+      .where(
+        or(
+          ...parentRecordIds.map((parentId) =>
+            isValidUuid(parentId)
+              ? or(
+                  eq(versionRequirement.id, parentId),
+                  eq(versionRequirement.baseRecordId, parentId),
+                )
+              : eq(versionRequirement.baseRecordId, parentId)),
+        ),
+      )
+      .limit(1);
+    const parent = parents[0];
+    if (!parent) return;
+
+    const stableParentIds = [parent.id, parent.baseRecordId].filter(
+      (value): value is string => Boolean(value),
+    );
+    const siblings = await this.db
+      .select({
+        id: subRequirementItem.id,
+        baseRecordId: subRequirementItem.baseRecordId,
+        appStatus: subRequirementItem.appStatus,
+        appSubRequirementName: subRequirementItem.appSubRequirementName,
+      })
+      .from(subRequirementItem)
+      .where(
+        or(
+          ...stableParentIds.map((parentId) =>
+            sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
+              @> jsonb_build_array(${parentId}::text)`),
+        ),
+      );
+    const stableId = item.baseRecordId || item.id;
+    const statusById = new Map(
+      siblings.map((sibling) => [sibling.baseRecordId || sibling.id, sibling]),
+    );
+    const edges = this.parsePipelineEdges(parent.subRequirementItem);
+    const incompletePredecessorIds = getIncompletePipelinePredecessorIds(
+      stableId,
+      [...statusById.entries()].map(([id, sibling]) => ({ id, status: sibling.appStatus })),
+      edges,
+    );
+    if (incompletePredecessorIds.length === 0) return;
+
+    const incompletePredecessors = incompletePredecessorIds
+      .map((predecessorId) => statusById.get(predecessorId)?.appSubRequirementName)
+      .map((name) => name || '未命名前置子需求');
+    throw new BadRequestException(
+      `当前子需求存在未完成的前置子需求：${incompletePredecessors.join('、') || '请先完成前置子需求'}`,
+    );
+  }
+
+  private parsePipelineEdges(value: unknown): RequirementPipelineEdge[] {
+    if (!value || typeof value !== 'object' || !Array.isArray((value as { edges?: unknown }).edges)) {
+      return [];
+    }
+    return (value as { edges: unknown[] }).edges.flatMap((edge): RequirementPipelineEdge[] => {
+      if (
+        !edge
+        || typeof edge !== 'object'
+        || typeof (edge as RequirementPipelineEdge).source !== 'string'
+        || typeof (edge as RequirementPipelineEdge).target !== 'string'
+      ) {
+        return [];
+      }
+      const { source, target } = edge as RequirementPipelineEdge;
+      return source && target && source !== target ? [{ source, target }] : [];
+    });
   }
 
   private async addToParentRequirement(

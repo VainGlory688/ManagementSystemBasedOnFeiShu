@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { FileText, Bug, ChevronRight } from 'lucide-react';
+import { FileText, Bug, ChevronRight, CircleAlert, CircleCheck } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import type { VersionSummary, DefectSeverityStat } from '@shared/api.interface';
@@ -8,7 +8,6 @@ import type { VersionSummary, DefectSeverityStat } from '@shared/api.interface';
 interface SummaryCardsProps {
   summary: VersionSummary | null;
   versionId: string;
-  versionName: string;
 }
 
 const SEVERITY_ORDER = ['致命', '严重', '一般', '轻微', '未知'];
@@ -20,7 +19,7 @@ const SEVERITY_COLORS: Record<string, { bar: string; text: string; bg: string }>
   未知: { bar: 'bg-muted-foreground/30', text: 'text-muted-foreground', bg: 'bg-muted' },
 };
 
-const SummaryCards = ({ summary, versionId, versionName }: SummaryCardsProps) => {
+const SummaryCards = ({ summary, versionId }: SummaryCardsProps) => {
   const [animateProgress, setAnimateProgress] = useState(false);
 
   useEffect(() => {
@@ -41,9 +40,38 @@ const SummaryCards = ({ summary, versionId, versionName }: SummaryCardsProps) =>
 
   return (
     <div className="flex flex-col gap-3">
+      <Card className={`border rounded-sm ${summary?.canClose ? 'border-success/40 bg-success/5' : 'border-warning/40 bg-warning/5'}`}>
+        <CardContent className="p-4">
+          <div className="flex items-start gap-2.5">
+            {summary?.canClose ? (
+              <CircleCheck className="mt-0.5 size-4 text-success" />
+            ) : (
+              <CircleAlert className="mt-0.5 size-4 text-warning" />
+            )}
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-foreground">关版就绪</div>
+              {!summary ? (
+                <div className="mt-1 text-xs text-muted-foreground">正在检查关联事项…</div>
+              ) : summary.canClose ? (
+                <div className="mt-1 text-xs text-success">所有关联需求、缺陷和测试计划均已完成，可关闭版本。</div>
+              ) : (
+                <>
+                  <div className="mt-1 text-xs text-warning">关闭版本前请处理以下事项：</div>
+                  <ul className="mt-1.5 space-y-1 text-xs text-foreground/80">
+                    {summary.closureBlockers.map((blocker) => (
+                      <li key={blocker}>• {blocker}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* 测试计划数量卡 */}
       <Link
-        to={`/test-plans?versionId=${versionId}`}
+        to={`/test-plans?planningVersion=${encodeURIComponent(versionId)}`}
         className="block group"
       >
         <Card className="border border-border rounded-sm transition-all duration-300 hover:shadow-sm hover:-translate-y-0.5 hover:border-primary/30">
@@ -68,7 +96,7 @@ const SummaryCards = ({ summary, versionId, versionName }: SummaryCardsProps) =>
 
       {/* 缺陷总数卡 */}
       <Link
-        to={`/defects?version=${encodeURIComponent(versionName)}`}
+        to={`/defects?planningVersion=${encodeURIComponent(versionId)}`}
         className="block group"
       >
         <Card className="border border-border rounded-sm transition-all duration-300 hover:shadow-sm hover:-translate-y-0.5 hover:border-destructive/30">

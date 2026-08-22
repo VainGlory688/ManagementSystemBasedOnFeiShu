@@ -25,6 +25,11 @@ import {
   UpdateRequirementPipelineDto,
   ExceptionItemsResponse,
 } from '@shared/api.interface';
+import {
+  aggregateRequirementStatus,
+  getBlockedPipelineNodeIds,
+  getOverdueDays,
+} from '@shared/requirement-business-rules';
 import { isValidUuid } from '@server/common/utils/uuid';
 
 interface ListQuery {
@@ -46,16 +51,28 @@ interface ExceptionListQuery extends Omit<ListQuery, 'page' | 'pageSize' | 'curr
 }
 
 function extractParentRecordIds(value: unknown): string[] {
-  if (!value) return [];
-  if (typeof value === 'object' && value !== null) {
-    const obj = value as Record<string, unknown>;
-    if (Array.isArray(obj.link_record_ids)) {
-      return obj.link_record_ids.filter(
-        (id): id is string => typeof id === 'string',
-      );
+  const ids = new Set<string>();
+  const visit = (item: unknown): void => {
+    if (Array.isArray(item)) {
+      item.forEach(visit);
+      return;
     }
-  }
-  return [];
+    if (!item || typeof item !== 'object') return;
+    const relation = item as Record<string, unknown>;
+    for (const key of ['id', 'baseRecordId', 'base_record_id']) {
+      if (typeof relation[key] === 'string' && relation[key]) {
+        ids.add(relation[key]);
+      }
+    }
+    if (Array.isArray(relation.link_record_ids)) {
+      relation.link_record_ids.forEach((id) => {
+        if (typeof id === 'string' && id) ids.add(id);
+      });
+    }
+    Object.values(relation).forEach(visit);
+  };
+  visit(value);
+  return [...ids];
 }
 
 function parsePipeline(value: unknown): RequirementPipelineConfig {
@@ -80,32 +97,6 @@ function parsePipeline(value: unknown): RequirementPipelineConfig {
     edges.push({ source, target });
   }
   return { edges };
-}
-
-function calculateCurrentStatus(
-  items: Array<{ appStatus: string | null; appExpectedEndDate: Date | string | null }>,
-): RequirementCurrentStatus {
-  if (items.length === 0) return '待拆分';
-  if (items.every((item) => item.appStatus === '已完成')) return '已完成';
-  if (items.some((item) => calculateOverdueDays(item.appExpectedEndDate, item.appStatus) > 0)) return '已逾期';
-  return '进行中';
-}
-
-function calculateOverdueDays(
-  expectedEndDate: Date | string | null,
-  status: string | null,
-): number {
-  if (!expectedEndDate || status === '已完成') return 0;
-  const dateText = expectedEndDate instanceof Date
-    ? `${expectedEndDate.getFullYear()}-${String(expectedEndDate.getMonth() + 1).padStart(2, '0')}-${String(expectedEndDate.getDate()).padStart(2, '0')}`
-    : String(expectedEndDate).slice(0, 10);
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText);
-  if (!match) return 0;
-
-  const dueDate = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  const now = new Date();
-  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-  return Math.max(0, Math.floor((today - dueDate) / 86_400_000));
 }
 
 function toLocalDateKey(value: Date | string | null): string {
@@ -259,15 +250,12 @@ export class RequirementService {
 
     const subItems = parentIds.length === 0
       ? []
-      : await this.db
+      : (await this.db
           .select()
-          .from(subRequirementItem)
-          .where(
-            or(...parentIds.map((parentId) =>
-              sql`${subRequirementItem.appParentWorkItem} -> 'link_record_ids'
-                @> jsonb_build_array(${parentId}::text)`,
-            )),
-          );
+          .from(subRequirementItem))
+          .filter((item) =>
+            extractParentRecordIds(item.appParentWorkItem)
+              .some((parentId) => parentIds.includes(parentId)));
     const today = getTodayDateKey();
     const todayDueSubRequirements = subItems
       .filter((item) =>
@@ -289,6 +277,12 @@ export class RequirementService {
         return subRequirement;
       })
       .sort((a, b) => a.appSubRequirementName.localeCompare(b.appSubRequirementName, 'zh-CN'));
+    const rawRequirements = requirements.items.length === 0
+      ? []
+      : await this.db
+          .select()
+          .from(versionRequirement)
+          .where(inArray(versionRequirement.id, requirements.items.map((item) => item.id)));
 
     return {
       overdueRequirements: requirements.items.filter(
@@ -298,7 +292,62 @@ export class RequirementService {
         (item) => !item.planningVersion || item.currentStatus === '待拆分',
       ),
       todayDueSubRequirements,
+      blockedSubRequirements: this.getBlockedSubRequirements(rawRequirements, subItems)
+        .filter((item) =>
+          (!subPriority || item.appPriority === subPriority)
+          && (!subOwner || item.appCurrentOwner === subOwner)
+          && (!subKeyword || item.appSubRequirementName.toLowerCase().includes(subKeyword.toLowerCase()))),
     };
+  }
+
+  getBlockedSubRequirements(
+    requirements: Array<typeof versionRequirement.$inferSelect>,
+    subItems: Array<typeof subRequirementItem.$inferSelect>,
+  ): SubRequirementItem[] {
+    const requirementByParentId = new Map<string, typeof versionRequirement.$inferSelect>();
+    for (const requirement of requirements) {
+      requirementByParentId.set(requirement.id, requirement);
+      if (requirement.baseRecordId) {
+        requirementByParentId.set(requirement.baseRecordId, requirement);
+      }
+    }
+
+    const itemsByRequirement = new Map<string, Array<typeof subRequirementItem.$inferSelect>>();
+    for (const subItem of subItems) {
+      const parent = extractParentRecordIds(subItem.appParentWorkItem)
+        .map((id) => requirementByParentId.get(id))
+        .find(Boolean);
+      if (parent) {
+        itemsByRequirement.set(parent.id, [
+          ...(itemsByRequirement.get(parent.id) || []),
+          subItem,
+        ]);
+      }
+    }
+
+    const blockedItems: SubRequirementItem[] = [];
+    for (const requirement of requirements) {
+      const items = itemsByRequirement.get(requirement.id) || [];
+      const itemsByStableId = new Map(
+        items.map((item) => [item.baseRecordId || item.id, item]),
+      );
+      const blockedIds = getBlockedPipelineNodeIds(
+        [...itemsByStableId.entries()].map(([id, item]) => ({ id, status: item.appStatus })),
+        parsePipeline(requirement.subRequirementItem).edges,
+      );
+      for (const blockedId of blockedIds) {
+        const item = itemsByStableId.get(blockedId);
+        if (!item) continue;
+        blockedItems.push({
+          ...this.mapSubRequirement(item),
+          appParentWorkItemRecordId: requirement.baseRecordId || requirement.id,
+          appParentWorkItemName: requirement.appReqName || '',
+        });
+      }
+    }
+
+    return blockedItems.sort((a, b) =>
+      a.appSubRequirementName.localeCompare(b.appSubRequirementName, 'zh-CN'));
   }
 
   async getDetail(id: string): Promise<VersionRequirement> {
@@ -431,13 +480,20 @@ export class RequirementService {
             OR date_trunc('milliseconds', _updated_at)
               = date_trunc('milliseconds', ${dto.expectedUpdatedAt || null}::timestamptz)
           )
-        RETURNING id`,
+        RETURNING _updated_at AS "updatedAt"`,
     );
-    if ((result as unknown as { id: string }[]).length === 0) {
+    const rows = result as unknown as { updatedAt: Date | string }[];
+    if (rows.length === 0) {
       throw new ConflictException('需求已被其他人修改，请刷新后重试');
     }
 
-    return config;
+    const updatedAt = rows[0].updatedAt;
+    return {
+      ...config,
+      updatedAt: updatedAt instanceof Date
+        ? updatedAt.toISOString()
+        : new Date(updatedAt).toISOString(),
+    };
   }
 
   async create(dto: CreateRequirementDto, userId: string): Promise<VersionRequirement> {
@@ -621,7 +677,7 @@ export class RequirementService {
     return new Map(
       requirements.map((requirement) => [
         requirement.id,
-        calculateCurrentStatus(
+        aggregateRequirementStatus(
           itemsByParent.get(requirement.baseRecordId || requirement.id)
           || itemsByParent.get(requirement.id)
           || [],
@@ -640,7 +696,7 @@ export class RequirementService {
       appCurrentOwner: s.appCurrentOwner || '',
       appExpectedStartDate: s.appExpectedStartDate?.toString() || '',
       appExpectedEndDate: s.appExpectedEndDate?.toString() || '',
-      appOverdueDays: calculateOverdueDays(s.appExpectedEndDate, s.appStatus),
+      appOverdueDays: getOverdueDays(s.appExpectedEndDate, s.appStatus),
       appPriority: s.appPriority || '',
       appDetails: s.appDetails || undefined,
       appParentWorkItemName: undefined,
@@ -724,7 +780,7 @@ export class RequirementService {
           appCurrentOwner: s.appCurrentOwner || '',
           appExpectedStartDate: s.appExpectedStartDate?.toString() || '',
           appExpectedEndDate: s.appExpectedEndDate?.toString() || '',
-          appOverdueDays: calculateOverdueDays(s.appExpectedEndDate, s.appStatus),
+          appOverdueDays: getOverdueDays(s.appExpectedEndDate, s.appStatus),
           appPriority: s.appPriority || '',
           appParentWorkItemName: parentIds.length > 0
             ? nameMap.get(parentIds[0]) || undefined

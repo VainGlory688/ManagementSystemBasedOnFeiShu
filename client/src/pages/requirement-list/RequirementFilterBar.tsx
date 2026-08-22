@@ -66,10 +66,12 @@ const RequirementFilterBar = ({
     getVersionList({ pageSize: 200 })
       .then((res) => {
         setPlanningVersionOptions(
-          res.items.map((v) => ({
-            value: v.baseRecordId || v.id,
-            label: v.versionName,
-          })),
+          res.items
+            .map((v) => ({
+              value: v.baseRecordId || v.id,
+              label: v.versionName,
+            }))
+            .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')),
         );
       })
       .catch(() => {

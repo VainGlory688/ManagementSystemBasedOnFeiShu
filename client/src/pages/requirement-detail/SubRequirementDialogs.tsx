@@ -7,9 +7,12 @@ import { toast } from 'sonner';
 import {
   createSubRequirement,
   deleteSubRequirement,
+  getSubRequirementList,
   getSubRequirementDetail,
   updateSubRequirement,
 } from '@/api/sub-requirement';
+import { getRequirementDetail } from '@/api/requirement';
+import { isOptimisticLockConflict } from '../../api/request-error';
 import { UserSelect } from '@/components/business-ui/user-select';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -19,6 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 import type { CreateSubRequirementDto, SubRequirementItem, UpdateSubRequirementDto } from '@shared/api.interface';
+import { getIncompletePipelinePredecessorIds } from '../../../../shared/requirement-business-rules';
 
 const formSchema = z.object({
   appSubRequirementName: z.string().trim().min(1, '子需求名称不能为空'),
@@ -65,6 +69,7 @@ const SubRequirementDialogs = ({
 }: SubRequirementDialogsProps) => {
   const { options } = useFieldOptions();
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [completionBlockers, setCompletionBlockers] = useState<string[]>([]);
   const form = useForm<SubRequirementFormData>({
     resolver: zodResolver(formSchema),
     defaultValues: emptyValues,
@@ -115,9 +120,47 @@ const SubRequirementDialogs = ({
       appCurrentOwner: data.appCurrentOwner || undefined,
     };
 
+    if (
+      editingItem
+      && ['已完成', '已上线'].includes(data.appStatus || '')
+      && !['已完成', '已上线'].includes(editingItem.appStatus)
+    ) {
+      try {
+        const [requirement, subRequirements] = await Promise.all([
+          getRequirementDetail(parentRequirementId),
+          getSubRequirementList({ page: 1, pageSize: 1000 }),
+        ]);
+        const siblings = subRequirements.items.filter((item) =>
+          item.appParentWorkItemRecordId === parentRequirementId
+          || item.appParentWorkItemRecordId === requirement.baseRecordId
+          || item.appParentWorkItemRecordId === requirement.id,
+        );
+        const blockerIds = getIncompletePipelinePredecessorIds(
+          editingItem.baseRecordId || editingItem.id,
+          siblings.map((item) => ({ id: item.baseRecordId || item.id, status: item.appStatus })),
+          requirement.pipeline?.edges || [],
+        );
+        if (blockerIds.length > 0) {
+          const nameById = new Map(siblings.map((item) => [
+            item.baseRecordId || item.id,
+            item.appSubRequirementName,
+          ]));
+          setCompletionBlockers(blockerIds.map((blockerId) =>
+            nameById.get(blockerId) || '未命名前置子需求'));
+          return;
+        }
+      } catch {
+        toast.error('无法校验前置子需求状态，请稍后重试');
+        return;
+      }
+    }
+
     try {
       if (editingItem) {
-        await updateSubRequirement(editingItem.id, dto as UpdateSubRequirementDto);
+        await updateSubRequirement(editingItem.id, {
+          ...dto,
+          expectedUpdatedAt: editingItem.updatedAt,
+        } as UpdateSubRequirementDto);
         toast.success('子需求已更新');
       } else {
         await createSubRequirement({
@@ -130,6 +173,12 @@ const SubRequirementDialogs = ({
       onSaved();
     } catch (error: unknown) {
       const message = (error as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      if (isOptimisticLockConflict(error)) {
+        toast.error('已被其他人修改，请刷新后重试');
+        closeEditor();
+        onSaved();
+        return;
+      }
       toast.error(message || (editingItem ? '更新子需求失败' : '创建子需求失败'));
     }
   };
@@ -169,6 +218,22 @@ const SubRequirementDialogs = ({
               onCancel={closeEditor}
             />
           )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={completionBlockers.length > 0} onOpenChange={(open) => !open && setCompletionBlockers([])}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>无法完成子需求</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            请先完成以下前置子需求，再将当前节点标记为已完成：
+          </p>
+          <ul className="space-y-1 rounded-sm border border-severity-fatal/30 bg-severity-fatal-bg p-3 text-sm text-severity-fatal">
+            {completionBlockers.map((name) => <li key={name}>• {name}</li>)}
+          </ul>
+          <div className="flex justify-end">
+            <Button type="button" onClick={() => setCompletionBlockers([])}>我知道了</Button>
+          </div>
         </DialogContent>
       </Dialog>
 

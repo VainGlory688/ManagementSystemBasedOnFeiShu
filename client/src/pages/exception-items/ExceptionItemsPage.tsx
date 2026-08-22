@@ -39,10 +39,11 @@ const EMPTY_RESPONSE: ExceptionItemsResponse = {
   overdueRequirements: [],
   unscheduledOrTodoRequirements: [],
   todayDueSubRequirements: [],
+  blockedSubRequirements: [],
 };
 
-type ExceptionTab = 'overdue' | 'unscheduled' | 'today-due';
-type TodayDueParams = Pick<ExceptionItemsParams, 'subPriority' | 'subOwner' | 'subKeyword'>;
+type ExceptionTab = 'overdue' | 'unscheduled' | 'today-due' | 'blocked';
+type SubRequirementParams = Pick<ExceptionItemsParams, 'subPriority' | 'subOwner' | 'subKeyword'>;
 
 function formatDate(value?: string): string {
   if (!value) return '-';
@@ -84,17 +85,17 @@ function SectionTitle({
   );
 }
 
-function TodayDueFilterBar({
+function SubRequirementFilterBar({
   params,
   onChange,
 }: {
-  params: TodayDueParams;
-  onChange: (params: TodayDueParams) => void;
+  params: SubRequirementParams;
+  onChange: (params: SubRequirementParams) => void;
 }) {
   const { options } = useFieldOptions();
   const [keywordInput, setKeywordInput] = useState(params.subKeyword || '');
 
-  const updateParams = (next: TodayDueParams) => onChange(next);
+  const updateParams = (next: SubRequirementParams) => onChange(next);
   const handlePriorityChange = (subPriority: string) => {
     updateParams({ ...params, subPriority: subPriority || undefined });
   };
@@ -214,7 +215,13 @@ function RequirementTable({
   );
 }
 
-function TodayDueTable({ items }: { items: SubRequirementItem[] }) {
+function SubRequirementTable({
+  items,
+  emptyText,
+}: {
+  items: SubRequirementItem[];
+  emptyText: string;
+}) {
   const navigate = useNavigate();
 
   return (
@@ -234,7 +241,7 @@ function TodayDueTable({ items }: { items: SubRequirementItem[] }) {
         {items.length === 0 ? (
           <TableRow className="hover:bg-transparent">
             <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
-              今日暂无到期子需求
+              {emptyText}
             </TableCell>
           </TableRow>
         ) : (
@@ -272,7 +279,8 @@ const ExceptionItemsPage = () => {
   const [activeTab, setActiveTab] = useState<ExceptionTab>('overdue');
   const [overdueParams, setOverdueParams] = useState<RequirementListParams>({ page: 1, pageSize: 20 });
   const [unscheduledParams, setUnscheduledParams] = useState<RequirementListParams>({ page: 1, pageSize: 20 });
-  const [todayDueParams, setTodayDueParams] = useState<TodayDueParams>({});
+  const [todayDueParams, setTodayDueParams] = useState<SubRequirementParams>({});
+  const [blockedParams, setBlockedParams] = useState<SubRequirementParams>({});
   const [data, setData] = useState<ExceptionItemsResponse>(EMPTY_RESPONSE);
   const [loading, setLoading] = useState(true);
   const activeParams = useMemo<ExceptionItemsParams>(() => (
@@ -280,8 +288,10 @@ const ExceptionItemsPage = () => {
       ? overdueParams
       : activeTab === 'unscheduled'
         ? unscheduledParams
-        : todayDueParams
-  ), [activeTab, overdueParams, unscheduledParams, todayDueParams]);
+        : activeTab === 'today-due'
+          ? todayDueParams
+          : blockedParams
+  ), [activeTab, blockedParams, overdueParams, unscheduledParams, todayDueParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -317,11 +327,17 @@ const ExceptionItemsPage = () => {
           <TabsTrigger value="today-due" className="rounded-sm px-4">
             今日到期事项
           </TabsTrigger>
+          <TabsTrigger value="blocked" className="rounded-sm px-4">
+            流水线阻塞
+          </TabsTrigger>
         </TabsList>
       </Tabs>
 
-      {activeTab === 'today-due' ? (
-        <TodayDueFilterBar params={todayDueParams} onChange={setTodayDueParams} />
+      {activeTab === 'today-due' || activeTab === 'blocked' ? (
+        <SubRequirementFilterBar
+          params={activeTab === 'today-due' ? todayDueParams : blockedParams}
+          onChange={activeTab === 'today-due' ? setTodayDueParams : setBlockedParams}
+        />
       ) : (
         <RequirementFilterBar
           params={activeTab === 'overdue' ? overdueParams : unscheduledParams}
@@ -345,10 +361,15 @@ const ExceptionItemsPage = () => {
             <SectionTitle icon={ClipboardList} title="未排期或待办事项" count={data.unscheduledOrTodoRequirements.length} tone="text-[hsl(38_90%_42%)]" />
             <RequirementTable items={data.unscheduledOrTodoRequirements} emptyText="暂无未排期或待办需求" />
           </section>
-        ) : (
+        ) : activeTab === 'today-due' ? (
           <section className="overflow-hidden rounded-sm border border-border bg-card">
             <SectionTitle icon={CalendarDays} title="今日到期事项" count={data.todayDueSubRequirements.length} tone="text-primary" />
-            <TodayDueTable items={data.todayDueSubRequirements} />
+            <SubRequirementTable items={data.todayDueSubRequirements} emptyText="今日暂无到期子需求" />
+          </section>
+        ) : (
+          <section className="overflow-hidden rounded-sm border border-border bg-card">
+            <SectionTitle icon={AlertTriangle} title="流水线阻塞" count={data.blockedSubRequirements.length} tone="text-severity-fatal" />
+            <SubRequirementTable items={data.blockedSubRequirements} emptyText="暂无受阻子需求" />
           </section>
         )
       )}

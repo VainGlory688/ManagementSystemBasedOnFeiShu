@@ -12,6 +12,7 @@ import { LabelBadge } from '@/components/LabelBadge';
 import { UserSelect } from '@/components/business-ui/user-select';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getTestPlanDetail, updateTestPlan } from '@/api/test-plan';
+import { isOptimisticLockConflict } from '../../api/request-error';
 import { getVersionList } from '@/api/version';
 import type { TestPlan, UpdateTestPlanDto } from '@shared/api.interface';
 
@@ -32,6 +33,7 @@ const TestPlanDetailPage = () => {
   const [versionOptions, setVersionOptions] = useState<Array<{ value: string; label: string }>>([]);
   const { options } = useFieldOptions();
   const saveQueueRef = useRef(Promise.resolve());
+  const updatedAtRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     getVersionList({ pageSize: 200 })
@@ -47,8 +49,10 @@ const TestPlanDetailPage = () => {
     const fetchDetail = async () => {
       setLoading(true);
       setError(null);
+      updatedAtRef.current = undefined;
       try {
         const result = await getTestPlanDetail(id);
+        updatedAtRef.current = result.updatedAt;
         setData(result);
       } catch (err) {
         logger.error('获取测试计划详情失败', err);
@@ -84,11 +88,19 @@ const TestPlanDetailPage = () => {
     const testPlanId = data.id;
     const save = saveQueueRef.current.catch(() => undefined).then(async () => {
       try {
-        const updated = await updateTestPlan(testPlanId, { [field]: value } as unknown as UpdateTestPlanDto);
+        const updated = await updateTestPlan(testPlanId, {
+          [field]: value,
+          expectedUpdatedAt: updatedAtRef.current,
+        } as unknown as UpdateTestPlanDto);
+        updatedAtRef.current = updated.updatedAt;
         setData(updated);
       } catch (err) {
         logger.error('更新测试计划字段失败', err);
-        toast.error('保存测试计划字段失败，请稍后重试');
+        toast.error(
+          isOptimisticLockConflict(err)
+            ? '测试计划已被其他人修改，请刷新页面后再编辑'
+            : '保存测试计划字段失败，请稍后重试',
+        );
         throw err;
       }
     });

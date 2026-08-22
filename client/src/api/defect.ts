@@ -16,6 +16,7 @@ export interface DefectListParams {
   businessLine?: string;
   discoveryEnvironment?: string;
   testingStage?: string;
+  planningVersion?: string;
   currentOwner?: string;
   keyword?: string;
 }

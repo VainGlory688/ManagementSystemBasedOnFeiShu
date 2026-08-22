@@ -19,7 +19,7 @@ const FALLBACK_OPTIONS: Record<string, string[]> = {
   // Defect (defect_item)
   defect_severity: ['紧急', '严重', '一般', '优化'],
   defect_priority: ['P0', 'P1', 'P2', '待定', '历史遗留'],
-  defect_status: ['新问题', '提交测试', '测试未通过', '已关闭', '重新打开'],
+  defect_status: ['新问题', '提交测试', '测试未通过', '已驳回', '已关闭', '重新打开'],
   defect_business_line: ['系统', '玩法', '活动', '其他'],
   defect_discovery_environment: ['线上环境', '正式环境', '定向环境', '测试环境'],
   defect_reject_reason:['环境因素', '配置原因', '需求变更', '重复BUG', '设计如此', '不予解决', '转需求单'],

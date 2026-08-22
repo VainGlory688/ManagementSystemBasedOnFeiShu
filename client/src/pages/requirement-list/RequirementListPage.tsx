@@ -34,6 +34,7 @@ import {
   deleteRequirement,
   type RequirementListParams,
 } from '@/api/requirement';
+import { isOptimisticLockConflict } from '../../api/request-error';
 import type { VersionRequirement, CreateRequirementDto, UpdateRequirementDto } from '@shared/api.interface';
 import { getVersionList } from '@/api/version';
 import { toast } from 'sonner';
@@ -100,7 +101,9 @@ const RequirementListPage = () => {
   const [versionOptions, setVersionOptions] = useState<Array<{ value: string; label: string }>>([]);
   useEffect(() => {
     getVersionList({ pageSize: 200 }).then((res) => {
-      setVersionOptions(res.items.map((v) => ({ value: v.baseRecordId || v.id, label: v.versionName })));
+      setVersionOptions(res.items
+        .map((v) => ({ value: v.baseRecordId || v.id, label: v.versionName }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')));
     }).catch(() => {});
   }, []);
 
@@ -237,6 +240,7 @@ const RequirementListPage = () => {
     try {
       await updateRequirement(editingItem.id, {
         ...payload,
+        expectedUpdatedAt: editingItem.updatedAt,
         ...(Object.prototype.hasOwnProperty.call(payload, 'currentOwner') && { currentOwner: payload.currentOwner || undefined }),
       });
       toast.success('需求更新成功');
@@ -245,6 +249,14 @@ const RequirementListPage = () => {
       form.reset();
       fetchList();
     } catch (err: unknown) {
+      if (isOptimisticLockConflict(err)) {
+        toast.error('已被其他人修改，请刷新后重试');
+        setDialogOpen(false);
+        setEditingItem(null);
+        form.reset();
+        fetchList();
+        return;
+      }
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || '更新失败';
       toast.error(msg);
     }

@@ -25,6 +25,7 @@ import {
   getSubRequirementList,
   updateRequirement,
 } from '@/api/requirement';
+import { isOptimisticLockConflict } from '../../api/request-error';
 import { getVersionList } from '@/api/version';
 import type { VersionRequirement, SubRequirementItem, UpdateRequirementDto } from '@shared/api.interface';
 import { toast } from 'sonner';
@@ -75,6 +76,7 @@ const RequirementDetailPage = () => {
   const [versionOptions, setVersionOptions] = useState<Array<{ value: string; label: string }>>([]);
   const { options } = useFieldOptions();
   const saveQueueRef = useRef(Promise.resolve());
+  const updatedAtRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     getVersionList({ pageSize: 200 })
@@ -98,9 +100,11 @@ const RequirementDetailPage = () => {
     if (!id) return;
     let cancelled = false;
     setLoading(true);
+    updatedAtRef.current = undefined;
     getRequirementDetail(id)
       .then((data: VersionRequirement) => {
         if (cancelled) return;
+        updatedAtRef.current = data.updatedAt;
         setDetail(data);
       })
       .catch((err: unknown) => {
@@ -151,12 +155,20 @@ const RequirementDetailPage = () => {
       try {
         const updated = await updateRequirement(
           requirementId,
-          { [field]: value } as unknown as UpdateRequirementDto,
+          {
+            [field]: value,
+            expectedUpdatedAt: updatedAtRef.current,
+          } as unknown as UpdateRequirementDto,
         );
+        updatedAtRef.current = updated.updatedAt;
         setDetail(updated);
       } catch (err) {
         logger.error('更新需求字段失败', err);
-        toast.error('保存需求字段失败，请稍后重试');
+        toast.error(
+          isOptimisticLockConflict(err)
+            ? '需求已被其他人修改，请刷新页面后再编辑'
+            : '保存需求字段失败，请稍后重试',
+        );
         throw err;
       }
     });
@@ -302,9 +314,15 @@ const RequirementDetailPage = () => {
       >
         <RequirementPipeline
           requirementId={detail.id}
+          expectedUpdatedAt={detail.updatedAt}
           items={subItems}
           pipeline={detail.pipeline}
-          onSaved={(pipeline) => setDetail((current) => current ? { ...current, pipeline } : current)}
+          onSaved={(pipeline) => {
+            if (pipeline.updatedAt) updatedAtRef.current = pipeline.updatedAt;
+            setDetail((current) => current
+              ? { ...current, pipeline, updatedAt: pipeline.updatedAt || current.updatedAt }
+              : current);
+          }}
         />
       </div>
 
@@ -352,7 +370,15 @@ const RequirementDetailPage = () => {
           setEditingSubItem(null);
         }}
         onCloseDelete={() => setDeletingSubItem(null)}
-        onSaved={loadSubItems}
+        onSaved={() => {
+          loadSubItems();
+          getRequirementDetail(id)
+            .then((updated) => {
+              updatedAtRef.current = updated.updatedAt;
+              setDetail(updated);
+            })
+            .catch((error: unknown) => logger.error('刷新需求详情失败', error));
+        }}
       />
 
       <style>{`
