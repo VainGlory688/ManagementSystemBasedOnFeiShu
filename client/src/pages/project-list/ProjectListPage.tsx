@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FolderKanban, Loader2, Pencil, Plus } from 'lucide-react';
+import { Loader2, Pencil, Plus } from 'lucide-react';
 
 import { createProject, getProjectList, updateProject } from '@/api/project';
 import type { Project } from '@shared/api.interface';
+import { ProjectLogo } from '@/components/ProjectLogo';
 import { ThemeSelector } from '@/components/ThemeSelector';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -91,15 +92,17 @@ export default function ProjectListPage() {
                 onClick={() => navigate(`/projects/${project.projectId}/dashboard`)}
                 className="group border border-border bg-card p-5 text-left transition-colors hover:border-primary hover:bg-accent/40 focus:outline-none focus:ring-2 focus:ring-primary"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <FolderKanban className="size-5 text-primary" />
-                  <div className="flex items-center gap-2">
-                    <button type="button" onClick={(event) => openEdit(event, project)} className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-primary" title="编辑项目"><Pencil className="size-3.5" /></button>
-                    <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 font-mono text-xs text-primary">{project.projectId}</span>
+                <div className="flex items-start gap-4">
+                  <ProjectLogo projectId={project.projectId} className="size-[8.25rem]" />
+                  <div className="flex min-w-0 flex-1 flex-col self-stretch">
+                    <div className="flex items-start justify-between gap-2">
+                      <h2 className="min-w-0 truncate font-heading text-lg font-semibold text-foreground group-hover:text-primary">{project.projectName}</h2>
+                      <button type="button" onClick={(event) => openEdit(event, project)} className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-primary" title="编辑项目"><Pencil className="size-3.5" /></button>
+                      <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 font-mono text-xs text-primary">{project.projectId}</span>
+                    </div>
+                    <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{project.description || '暂无项目说明'}</p>
                   </div>
                 </div>
-                <h2 className="mt-5 truncate font-heading text-lg font-semibold text-foreground group-hover:text-primary">{project.projectName}</h2>
-                <p className="mt-2 line-clamp-2 min-h-10 text-sm text-muted-foreground">{project.description || '暂无项目说明'}</p>
                 <div className="mt-5 flex items-center justify-between border-t border-border pt-3 text-xs text-muted-foreground">
                   <span className="flex flex-wrap gap-1">
                     {(project.status ? project.status.split(',') : ['未设置']).map((status) => (

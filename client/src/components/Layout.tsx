@@ -7,7 +7,6 @@ import {
   ClipboardList,
   Bug,
   UserSquare2,
-  Gamepad2,
   ChevronsRight,
   GanttChart,
   TriangleAlert,
@@ -34,6 +33,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import { UserDisplay } from '@/components/business-ui/user-display/user-display';
 import { GlobalSearch } from '@/components/GlobalSearch';
+import { ProjectLogo } from '@/components/ProjectLogo';
 import { ThemeSelector } from '@/components/ThemeSelector';
 
 interface NavItem {
@@ -75,11 +75,10 @@ const LayoutContent = () => {
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" asChild>
                 <Link to="dashboard">
-                  <div className="flex aspect-square size-8 items-center justify-center rounded-sm bg-primary text-primary-foreground">
-                    <Gamepad2 className="size-4" />
-                  </div>
-                  <div className="flex-1 font-heading text-base font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-                    项目管理中心
+                  <ProjectLogo projectId={projectId || 'PROJECT'} className="size-8" />
+                  <div className="flex-1 font-heading text-base font-semibold leading-tight tracking-tight group-data-[collapsible=icon]:hidden">
+                    <span className="block">{projectId || '项目'}</span>
+                    <span className="block">管理中心</span>
                   </div>
                   <ChevronsRight className="ml-auto size-4 text-sidebar-foreground/50 group-data-[collapsible=icon]:hidden" />
                 </Link>
