@@ -24,6 +24,7 @@ import { getPriorityRowClass } from '@/utils/version-helpers';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 import RequirementFilterBar from '@/pages/requirement-list/RequirementFilterBar';
 import { RequirementStatusBadge } from '@/pages/requirement-list/RequirementStatusBadge';
+import { PriorityBadge } from '@/pages/test-plan-list/PriorityBadge';
 import {
   getExceptionItems,
   type ExceptionItemsParams,
@@ -52,8 +53,11 @@ function formatDate(value?: string): string {
 }
 
 function getSubRequirementStatusClass(status: string): string {
-  if (status === '已完成') {
-    return 'bg-[hsl(160_40%_94%)] text-[hsl(160_55%_32%)] border-transparent';
+  if (['已完成', '已上线'].includes(status)) {
+    return 'bg-success/15 text-success border-transparent';
+  }
+  if (['进行中', '开发中'].includes(status)) {
+    return 'bg-priority-p2-bg text-priority-p2 border-transparent';
   }
   if (['已阻塞', '有风险'].includes(status)) {
     return 'bg-severity-fatal-bg text-severity-fatal border-transparent';
@@ -202,7 +206,7 @@ function RequirementTable({
               </TableCell>
               <TableCell>{item.currentOwner ? <UserDisplay value={[item.currentOwner]} size="small" /> : '-'}</TableCell>
               <TableCell><RequirementStatusBadge status={item.currentStatus} /></TableCell>
-              <TableCell>{item.priority || '-'}</TableCell>
+              <TableCell><PriorityBadge priority={item.priority || '-'} /></TableCell>
               <TableCell><LabelBadge type="requirementType" value={item.reqType} /></TableCell>
               <TableCell><LabelBadge type="businessLine" value={item.businessLine} /></TableCell>
               <TableCell className="text-muted-foreground">{item.planningVersionName || '未排期'}</TableCell>
@@ -265,7 +269,7 @@ function SubRequirementTable({
                   {item.appStatus || '-'}
                 </Badge>
               </TableCell>
-              <TableCell>{item.appPriority || '-'}</TableCell>
+              <TableCell><PriorityBadge priority={item.appPriority || '-'} /></TableCell>
               <TableCell className="font-mono text-xs text-muted-foreground">{formatDate(item.appExpectedEndDate)}</TableCell>
             </TableRow>
           ))

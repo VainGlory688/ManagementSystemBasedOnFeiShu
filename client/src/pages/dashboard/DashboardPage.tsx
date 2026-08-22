@@ -16,10 +16,12 @@ import { logger } from '@lark-apaas/client-toolkit/logger';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { UserDisplay } from '@/components/business-ui/user-display';
 import { PillBadge } from '@/pages/defect-list/badge-helpers';
 import { PriorityBadge } from '@/pages/test-plan-list/PriorityBadge';
 import { getStatusInfo } from '@/utils/version-helpers';
+import { getVersionList } from '@/api/version';
 
 import {
   getDashboardKpis,
@@ -92,6 +94,11 @@ function getActivityHref(type: ActivityType, targetId: string): string {
     default:
       return '#';
   }
+}
+
+function withPlanningVersion(href: string, planningVersion: string, key: keyof DashboardKpis): string {
+  if (!planningVersion || key === 'activeVersions') return href;
+  return `${href}${href.includes('?') ? '&' : '?'}planningVersion=${encodeURIComponent(planningVersion)}`;
 }
 
 function getActivityTypeLabel(type: ActivityType): string {
@@ -174,17 +181,20 @@ const DashboardPage = () => {
     useState<VersionStatusResponse | null>(null);
   const [recentActivities, setRecentActivities] =
     useState<RecentActivitiesResponse | null>(null);
+  const [planningVersion, setPlanningVersion] = useState('');
+  const [versionOptions, setVersionOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const loadAll = async (): Promise<void> => {
+      setLoading(true);
       try {
         const [k, d, b, v, r] = await Promise.all([
-          getDashboardKpis(),
-          getDefectSeverity(),
-          getBusinessLineStats(),
+          getDashboardKpis(planningVersion || undefined),
+          getDefectSeverity(planningVersion || undefined),
+          getBusinessLineStats(planningVersion || undefined),
           getVersionStatus(),
           getRecentActivities(10),
         ]);
@@ -206,6 +216,17 @@ const DashboardPage = () => {
     return () => {
       cancelled = true;
     };
+  }, [planningVersion]);
+
+  useEffect(() => {
+    getVersionList({ pageSize: 200 })
+      .then((response) => setVersionOptions(response.items
+        .map((version) => ({
+          value: version.baseRecordId || version.id,
+          label: version.versionName,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))))
+      .catch((err: unknown) => logger.error('总览计划版本列表加载失败', err));
   }, []);
 
   /* ---------- 图表配置 ---------- */
@@ -431,6 +452,29 @@ const DashboardPage = () => {
       transition={{ duration: 0.3, ease: 'easeOut' }}
       className="space-y-4 max-w-full"
     >
+      <div className="flex flex-wrap items-center gap-3 rounded-sm border border-border bg-card px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Layers className="size-4 text-primary" />
+          <span className="text-sm font-medium text-foreground">数据范围</span>
+        </div>
+        <Select value={planningVersion} onValueChange={setPlanningVersion}>
+          <SelectTrigger className="h-8 w-[220px]">
+            <SelectValue placeholder="全部版本" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">全部版本</SelectItem>
+            {versionOptions.map((version) => (
+              <SelectItem key={version.value} value={version.value}>{version.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span className="text-xs text-muted-foreground">
+          {planningVersion
+            ? '统计按所选版本的需求、缺陷及测试计划关联范围计算'
+            : '当前显示全部版本的汇总数据'}
+        </span>
+      </div>
+
       {/* KPI 卡片行 */}
       <div
         data-ai-section-type="card-stat"
@@ -451,7 +495,7 @@ const DashboardPage = () => {
               }}
               whileHover={{ y: -2 }}
             >
-              <Link to={cfg.href}>
+              <Link to={withPlanningVersion(cfg.href, planningVersion, cfg.key)}>
                 <Card className="relative overflow-hidden border border-border rounded-sm h-full cursor-pointer transition-shadow duration-200 hover:shadow-md">
                   <div
                   className={`absolute inset-0 bg-gradient-to-br ${cfg.accent} opacity-10 pointer-events-none`}

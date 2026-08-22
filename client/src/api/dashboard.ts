@@ -8,10 +8,14 @@ import type {
   RecentActivitiesResponse,
 } from '@shared/api.interface';
 
-export async function getDashboardKpis(): Promise<DashboardKpis> {
+function getVersionQuery(planningVersion?: string): string {
+  return planningVersion ? `?planningVersion=${encodeURIComponent(planningVersion)}` : '';
+}
+
+export async function getDashboardKpis(planningVersion?: string): Promise<DashboardKpis> {
   try {
     const response = await axiosForBackend({
-      url: '/api/dashboard/kpis',
+      url: `/api/dashboard/kpis${getVersionQuery(planningVersion)}`,
       method: 'GET',
     });
     return response.data;
@@ -21,10 +25,10 @@ export async function getDashboardKpis(): Promise<DashboardKpis> {
   }
 }
 
-export async function getDefectSeverity(): Promise<DefectSeverityResponse> {
+export async function getDefectSeverity(planningVersion?: string): Promise<DefectSeverityResponse> {
   try {
     const response = await axiosForBackend({
-      url: '/api/dashboard/defect-severity',
+      url: `/api/dashboard/defect-severity${getVersionQuery(planningVersion)}`,
       method: 'GET',
     });
     return response.data;
@@ -34,10 +38,10 @@ export async function getDefectSeverity(): Promise<DefectSeverityResponse> {
   }
 }
 
-export async function getBusinessLineStats(): Promise<BusinessLineStatsResponse> {
+export async function getBusinessLineStats(planningVersion?: string): Promise<BusinessLineStatsResponse> {
   try {
     const response = await axiosForBackend({
-      url: '/api/dashboard/business-line-stats',
+      url: `/api/dashboard/business-line-stats${getVersionQuery(planningVersion)}`,
       method: 'GET',
     });
     return response.data;

@@ -21,7 +21,7 @@ const getStatusBadgeClass = (status: string): string => {
   switch (status) {
     case '已完成':
     case '已上线':
-      return 'bg-[hsl(160_40%_94%)] text-[hsl(160_55%_42%)] border-transparent';
+      return 'bg-success/15 text-success border-transparent';
     case '进行中':
     case '开发中':
       return 'bg-priority-p2-bg text-priority-p2 border-transparent';
@@ -29,7 +29,7 @@ const getStatusBadgeClass = (status: string): string => {
       return 'bg-muted text-muted-foreground border-transparent';
     case '已阻塞':
     case '有风险':
-      return 'bg-priority-p0-bg text-priority-p0 border-transparent';
+      return 'bg-severity-fatal-bg text-severity-fatal border-transparent';
     default:
       return 'bg-muted text-muted-foreground border-transparent';
   }
@@ -38,11 +38,11 @@ const getStatusBadgeClass = (status: string): string => {
 const getPriorityBadgeClass = (priority: string): string => {
   switch (priority) {
     case 'P0':
-      return 'bg-priority-p0 text-priority-p0-foreground border-transparent';
+      return 'bg-priority-p0-bg text-priority-p0 border-transparent';
     case 'P1':
-      return 'bg-priority-p1 text-priority-p1-foreground border-transparent';
+      return 'bg-priority-p1-bg text-priority-p1 border-transparent';
     case 'P2':
-      return 'bg-priority-p2 text-[hsl(40_100%_12%)] border-transparent';
+      return 'bg-priority-p2-bg text-priority-p2 border-transparent';
     case '待定':
       return 'bg-transparent text-muted-foreground border-border';
     case '历史遗留':
@@ -152,7 +152,7 @@ const SubRequirementTable = ({ items, loading, onEdit, onDelete }: SubRequiremen
                   </TableCell>
                   <TableCell>
                     <Badge
-                      variant="secondary"
+                      variant="outline"
                       className={cn(
                         'h-[22px] px-2 text-[11px] font-medium rounded-full',
                         getStatusBadgeClass(item.appStatus),
@@ -175,8 +175,8 @@ const SubRequirementTable = ({ items, loading, onEdit, onDelete }: SubRequiremen
                   <TableCell>
                     {isOverdue ? (
                       <Badge
-                        variant="destructive"
-                        className="h-[22px] px-2 text-[11px] font-semibold rounded-full bg-destructive text-destructive-foreground border-transparent"
+                        variant="outline"
+                        className="h-[22px] px-2 text-[11px] font-semibold rounded-full bg-severity-fatal-bg text-severity-fatal border-transparent"
                       >
                         逾期 {item.appOverdueDays} 天
                       </Badge>
@@ -186,7 +186,7 @@ const SubRequirementTable = ({ items, loading, onEdit, onDelete }: SubRequiremen
                   </TableCell>
                   <TableCell>
                     <Badge
-                      variant="default"
+                      variant="outline"
                       className={cn(
                         'h-[22px] px-2 text-[11px] font-semibold rounded-full',
                         getPriorityBadgeClass(item.appPriority),

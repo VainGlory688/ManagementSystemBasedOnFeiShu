@@ -2,24 +2,12 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Layers, Flag } from 'lucide-react';
 import type { MyVersionItem } from '@shared/api.interface';
+import { getStatusInfo } from '@/utils/version-helpers';
 
 interface VersionListProps {
   items: MyVersionItem[];
   loading: boolean;
 }
-
-const statusClassMap: Record<string, string> = {
-  开发中: 'bg-[hsl(215_30%_94%)] text-[hsl(215_60%_38%)]',
-  提测阶段: 'bg-[hsl(38_70%_93%)] text-[hsl(38_80%_42%)]',
-  灰度中: 'bg-[hsl(28_70%_94%)] text-[hsl(28_80%_45%)]',
-  已发布: 'bg-[hsl(160_40%_94%)] text-[hsl(160_60%_35%)]',
-  已关闭: 'bg-[hsl(215_12%_92%)] text-[hsl(215_12%_50%)]',
-  未开始: 'bg-[hsl(215_12%_92%)] text-[hsl(215_12%_50%)]',
-};
-
-const getStatusClass = (status: string): string => {
-  return statusClassMap[status] || 'bg-[hsl(215_12%_92%)] text-[hsl(215_12%_50%)]';
-};
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -66,8 +54,10 @@ const VersionList = ({ items, loading }: VersionListProps) => {
       data-ai-section-type="card-menu"
       className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"
     >
-      {items.map((item: MyVersionItem) => (
-        <motion.button
+      {items.map((item: MyVersionItem) => {
+        const statusInfo = getStatusInfo(item.appStatus);
+        return (
+          <motion.button
           key={item.id}
           variants={itemVariants}
           type="button"
@@ -82,12 +72,9 @@ const VersionList = ({ items, loading }: VersionListProps) => {
             {item.versionName || '未命名版本'}
           </h3>
           <div className="mt-4 flex items-center justify-between gap-2">
-            <span
-              className={`inline-flex items-center h-[22px] px-2 rounded-full text-xs font-medium ${getStatusClass(
-                item.appStatus,
-              )}`}
-            >
-              {item.appStatus || '未开始'}
+            <span className={`inline-flex h-[22px] items-center rounded-full border px-2 text-xs font-medium ${statusInfo.className}`}>
+              <span className={`mr-1.5 size-1.5 rounded-full ${statusInfo.dot}`} />
+              {statusInfo.label}
             </span>
             {item.currentMilestone && (
               <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
@@ -96,8 +83,9 @@ const VersionList = ({ items, loading }: VersionListProps) => {
               </span>
             )}
           </div>
-        </motion.button>
-      ))}
+          </motion.button>
+        );
+      })}
     </motion.div>
   );
 };

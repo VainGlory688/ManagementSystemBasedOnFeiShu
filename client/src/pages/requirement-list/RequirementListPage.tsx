@@ -74,11 +74,11 @@ const PRIORITY_ORDER: Record<string, number> = {
 const getPriorityBadgeClass = (priority: string): string => {
   switch (priority) {
     case 'P0':
-      return 'bg-priority-p0 text-priority-p0-foreground border-transparent';
+      return 'bg-priority-p0-bg text-priority-p0 border-transparent';
     case 'P1':
-      return 'bg-priority-p1 text-priority-p1-foreground border-transparent';
+      return 'bg-priority-p1-bg text-priority-p1 border-transparent';
     case 'P2':
-      return 'bg-priority-p2 text-[hsl(40_100%_12%)] border-transparent';
+      return 'bg-priority-p2-bg text-priority-p2 border-transparent';
     case '待定':
       return 'bg-transparent text-muted-foreground border-border';
     case '历史遗留':
@@ -447,7 +447,7 @@ const RequirementListPage = () => {
                       </TableCell>
                       <TableCell className="w-[90px]">
                         <Badge
-                          variant="default"
+                          variant="outline"
                           className={cn(
                             'h-[22px] px-2 text-[11px] font-semibold rounded-full',
                             getPriorityBadgeClass(item.priority),

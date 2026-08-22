@@ -18,18 +18,22 @@ export class DashboardController {
   ) {}
 
   @Get('kpis')
-  async getKpis(): Promise<DashboardKpis> {
-    return this.dashboardService.getKpis();
+  async getKpis(@Query('planningVersion') planningVersion?: string): Promise<DashboardKpis> {
+    return this.dashboardService.getKpis(planningVersion);
   }
 
   @Get('defect-severity')
-  async getDefectSeverity(): Promise<DefectSeverityResponse> {
-    return this.dashboardService.getDefectSeverity();
+  async getDefectSeverity(
+    @Query('planningVersion') planningVersion?: string,
+  ): Promise<DefectSeverityResponse> {
+    return this.dashboardService.getDefectSeverity(planningVersion);
   }
 
   @Get('business-line-stats')
-  async getBusinessLineStats(): Promise<BusinessLineStatsResponse> {
-    return this.dashboardService.getBusinessLineStats();
+  async getBusinessLineStats(
+    @Query('planningVersion') planningVersion?: string,
+  ): Promise<BusinessLineStatsResponse> {
+    return this.dashboardService.getBusinessLineStats(planningVersion);
   }
 
   @Get('version-status')

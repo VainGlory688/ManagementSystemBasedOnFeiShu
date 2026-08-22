@@ -10,10 +10,10 @@ interface DefectListProps {
 }
 
 const severityClassMap: Record<string, string> = {
-  致命: 'bg-[hsl(4_60%_95%)] text-[hsl(4_75%_42%)] border-[hsl(4_50%_82%)]',
-  严重: 'bg-[hsl(28_70%_94%)] text-[hsl(28_80%_45%)] border-[hsl(28_60%_85%)]',
-  一般: 'bg-[hsl(45_70%_95%)] text-[hsl(45_80%_42%)] border-[hsl(45_60%_85%)]',
-  轻微: 'bg-[hsl(215_12%_92%)] text-[hsl(215_15%_45%)] border-[hsl(215_10%_85%)]',
+  致命: 'bg-severity-fatal-bg text-severity-fatal border-severity-fatal/30',
+  严重: 'bg-severity-major-bg text-severity-major border-severity-major/30',
+  一般: 'bg-severity-normal-bg text-severity-normal border-severity-normal/30',
+  轻微: 'bg-severity-minor-bg text-severity-minor border-severity-minor/30',
 };
 
 const getSeverityClass = (severity: string): string => {
@@ -75,7 +75,7 @@ const DefectList = ({ items, loading }: DefectListProps) => {
               onClick={() => navigate(`/defects/${item.id}`)}
               className={`w-full text-left rounded-sm border p-4 transition-all duration-200 hover:pl-[14px] focus:outline-none focus:ring-2 focus:ring-offset-1 group relative overflow-hidden ${
                 isHighRisk
-                  ? 'border-[hsl(4_50%_75%)] bg-[hsl(4_60%_97%)] hover:border-[hsl(4_70%_60%)] hover:bg-[hsl(4_60%_95%)] focus:ring-[hsl(4_70%_55%)]/30'
+                  ? 'border-severity-fatal/40 bg-severity-fatal-bg hover:border-severity-fatal/70 hover:bg-severity-fatal-bg/80 focus:ring-severity-fatal/30'
                   : 'border-border bg-card hover:border-primary/40 hover:bg-accent/40 focus:ring-primary/30'
               }`}
             >

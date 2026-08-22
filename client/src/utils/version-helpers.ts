@@ -5,10 +5,12 @@ export const STATUS_MAP: Record<string, { label: string; variant: string; dot: s
   未开始: { label: '未开始', variant: 'outline', dot: 'bg-muted-foreground', className: 'bg-muted text-muted-foreground border-border' },
   未启动: { label: '未启动', variant: 'outline', dot: 'bg-muted-foreground', className: 'bg-muted text-muted-foreground border-border' },
   进行中: { label: '进行中', variant: 'default', dot: 'bg-primary', className: 'bg-primary/10 text-primary border-primary/20' },
-  开发中: { label: '开发中', variant: 'outline', dot: 'bg-[hsl(38_90%_50%)]', className: 'bg-[hsl(38_70%_93%)] text-[hsl(38_75%_30%)] border-[hsl(38_90%_50%)]' },
+  开发中: { label: '开发中', variant: 'outline', dot: 'bg-warning', className: 'bg-warning/15 text-warning border-warning' },
+  提测阶段: { label: '提测阶段', variant: 'outline', dot: 'bg-warning', className: 'bg-warning/15 text-warning border-warning' },
+  灰度中: { label: '灰度中', variant: 'outline', dot: 'bg-severity-major', className: 'bg-severity-major-bg text-severity-major border-severity-major' },
   已发布: { label: '已发布', variant: 'success', dot: 'bg-success', className: 'bg-success/10 text-success border-success/20' },
   已关闭: { label: '已关闭', variant: 'outline', dot: 'border border-muted-foreground', className: 'bg-muted text-muted-foreground border-border' },
-  已结束: { label: '已结束', variant: 'outline', dot: 'bg-[hsl(160_55%_42%)]', className: 'bg-[hsl(160_40%_94%)] text-[hsl(160_55%_32%)] border-[hsl(160_55%_42%)]' },
+  已结束: { label: '已结束', variant: 'outline', dot: 'bg-success', className: 'bg-success/15 text-success border-success' },
 };
 
 export function getStatusInfo(status: string) {
@@ -19,20 +21,20 @@ export function getStatusInfo(status: string) {
 export const PRIORITY_MAP: Record<string, { label: string; bg: string; fg: string; border: string }> = {
   P0: {
     label: 'P0',
-    bg: 'bg-priority-p0',
-    fg: 'text-priority-p0-foreground',
+    bg: 'bg-priority-p0-bg',
+    fg: 'text-priority-p0',
     border: 'border-transparent',
   },
   P1: {
     label: 'P1',
-    bg: 'bg-priority-p1',
-    fg: 'text-priority-p1-foreground',
+    bg: 'bg-priority-p1-bg',
+    fg: 'text-priority-p1',
     border: 'border-transparent',
   },
   P2: {
     label: 'P2',
-    bg: 'bg-priority-p2',
-    fg: 'text-[hsl(40_100%_12%)]',
+    bg: 'bg-priority-p2-bg',
+    fg: 'text-priority-p2',
     border: 'border-transparent',
   },
   待定: {
@@ -62,9 +64,9 @@ export function getPriorityInfo(priority: string) {
 export const VERSION_TYPE_MAP: Record<string, { label: string; bg: string; fg: string; border: string }> = {
   主版本发布: {
     label: '主版本发布',
-    bg: 'bg-[hsl(160_40%_94%)]',
-    fg: 'text-[hsl(160_55%_32%)]',
-    border: 'border-[hsl(160_55%_42%)]',
+    bg: 'bg-success/15',
+    fg: 'text-success',
+    border: 'border-success',
   },
   运营版本发布: {
     label: '运营版本发布',

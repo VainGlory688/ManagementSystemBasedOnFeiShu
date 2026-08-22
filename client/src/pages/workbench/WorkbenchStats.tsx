@@ -14,7 +14,7 @@ interface StatCardConfig {
   value: number;
   icon: LucideIcon;
   href: string;
-  gradient: string;
+  surface: string;
   accent: string;
 }
 
@@ -34,8 +34,8 @@ const WorkbenchStats = ({ overview }: WorkbenchStatsProps) => {
       value: overview?.myRequirementCount ?? 0,
       icon: ListTodo,
       href: '/requirements?currentOwner=me',
-      gradient: 'from-[hsl(215_60%_96%)] to-[hsl(215_40%_99%)]',
-      accent: 'text-[hsl(215_60%_32%)]',
+      surface: 'border-primary/30 bg-primary/10',
+      accent: 'text-primary',
     },
     {
       key: 'defect',
@@ -43,8 +43,8 @@ const WorkbenchStats = ({ overview }: WorkbenchStatsProps) => {
       value: overview?.myDefectCount ?? 0,
       icon: Bug,
       href: '/defects?currentOwner=me',
-      gradient: 'from-[hsl(4_60%_97%)] to-[hsl(10_50%_99%)]',
-      accent: 'text-[hsl(4_70%_48%)]',
+      surface: 'border-severity-fatal/30 bg-severity-fatal-bg',
+      accent: 'text-severity-fatal',
     },
     {
       key: 'test',
@@ -52,8 +52,8 @@ const WorkbenchStats = ({ overview }: WorkbenchStatsProps) => {
       value: overview?.myTestPlanCount ?? 0,
       icon: ClipboardList,
       href: '/test-plans?executor=me',
-      gradient: 'from-[hsl(160_40%_96%)] to-[hsl(160_30%_99%)]',
-      accent: 'text-[hsl(160_55%_38%)]',
+      surface: 'border-success/30 bg-success/15',
+      accent: 'text-success',
     },
   ];
 
@@ -69,7 +69,7 @@ const WorkbenchStats = ({ overview }: WorkbenchStatsProps) => {
             key={card.key}
             type="button"
             onClick={() => navigate(card.href)}
-            className={`group text-left relative overflow-hidden rounded-sm border border-border bg-gradient-to-br ${card.gradient} p-5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md hover:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 ${
+            className={`group text-left relative overflow-hidden rounded-sm border ${card.surface} p-5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md hover:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 ${
               visible ? 'opacity-100 scale-100' : 'opacity-0 scale-90'
             }`}
             style={{ transitionDelay: `${index * 100 + 120}ms` }}

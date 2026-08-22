@@ -10,11 +10,11 @@ interface RequirementListProps {
 }
 
 const priorityClassMap: Record<string, string> = {
-  P0: 'bg-[hsl(4_60%_95%)] text-[hsl(4_75%_42%)] border-[hsl(4_50%_85%)]',
-  P1: 'bg-[hsl(28_70%_94%)] text-[hsl(28_80%_45%)] border-[hsl(28_60%_85%)]',
-  P2: 'bg-[hsl(45_70%_95%)] text-[hsl(40_100%_25%)] border-[hsl(45_60%_82%)]',
+  P0: 'bg-priority-p0-bg text-priority-p0 border-priority-p0/30',
+  P1: 'bg-priority-p1-bg text-priority-p1 border-priority-p1/30',
+  P2: 'bg-priority-p2-bg text-priority-p2 border-priority-p2/30',
   待定: 'bg-transparent text-muted-foreground border-border',
-  历史遗留: 'bg-[hsl(215_12%_92%)] text-[hsl(215_15%_45%)] border-[hsl(215_10%_85%)]',
+  历史遗留: 'bg-priority-p3-bg text-priority-p3 border-priority-p3/30',
 };
 
 const getPriorityClass = (priority: string): string => {

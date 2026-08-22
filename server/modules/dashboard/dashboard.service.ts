@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { eq, count, desc, inArray, sql } from 'drizzle-orm';
+import { and, eq, count, desc, inArray, or, sql } from 'drizzle-orm';
 import {
   mainVersionManage,
   versionRequirement,
@@ -22,16 +22,39 @@ export class DashboardService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
   ) {}
 
-  async getKpis(): Promise<DashboardKpis> {
+  async getKpis(planningVersion?: string): Promise<DashboardKpis> {
+    const parentRequirementIds = planningVersion
+      ? await this.getParentRequirementIds(planningVersion)
+      : [];
+    const defectScope = planningVersion
+      ? this.getDefectScope(parentRequirementIds)
+      : undefined;
     const [versionRes, reqRes, defectRes, testRes] = await Promise.all([
       this.db.select({ count: count() }).from(mainVersionManage)
-        .where(inArray(mainVersionManage.appStatus, ['开发中', '进行中'])),
+        .where(planningVersion
+          ? and(
+              eq(mainVersionManage.baseRecordId, planningVersion),
+              inArray(mainVersionManage.appStatus, ['开发中', '进行中']),
+            )
+          : inArray(mainVersionManage.appStatus, ['开发中', '进行中'])),
       this.db.select({ count: count() }).from(versionRequirement)
-        .where(eq(versionRequirement.priority, 'P0')),
+        .where(planningVersion
+          ? and(
+              eq(versionRequirement.planningVersion, planningVersion),
+              eq(versionRequirement.priority, 'P0'),
+            )
+          : eq(versionRequirement.priority, 'P0')),
       this.db.select({ count: count() }).from(defectItem)
-        .where(sql`${defectItem.status} != '已关闭'`),
+        .where(defectScope
+          ? and(defectScope, sql`${defectItem.status} NOT IN ('已关闭', '已驳回')`)
+          : sql`${defectItem.status} NOT IN ('已关闭', '已驳回')`),
       this.db.select({ count: count() }).from(testPlan)
-        .where(inArray(testPlan.testStatus, ['进行中', '测试中'])),
+        .where(planningVersion
+          ? and(
+              sql`${testPlan.relatedVersion}::text LIKE '%' || ${planningVersion} || '%'`,
+              inArray(testPlan.testStatus, ['进行中', '测试中']),
+            )
+          : inArray(testPlan.testStatus, ['进行中', '测试中'])),
     ]);
     return {
       activeVersions: Number(versionRes[0]?.count ?? 0),
@@ -41,13 +64,17 @@ export class DashboardService {
     };
   }
 
-  async getDefectSeverity(): Promise<DefectSeverityResponse> {
+  async getDefectSeverity(planningVersion?: string): Promise<DefectSeverityResponse> {
+    const defectScope = planningVersion
+      ? this.getDefectScope(await this.getParentRequirementIds(planningVersion))
+      : undefined;
     const result = await this.db
       .select({
         severity: defectItem.severity,
         count: count(),
       })
       .from(defectItem)
+      .where(defectScope)
       .groupBy(defectItem.severity);
     return {
       items: result.map((r) => ({
@@ -57,13 +84,17 @@ export class DashboardService {
     };
   }
 
-  async getBusinessLineStats(): Promise<BusinessLineStatsResponse> {
+  async getBusinessLineStats(planningVersion?: string): Promise<BusinessLineStatsResponse> {
+    const defectScope = planningVersion
+      ? this.getDefectScope(await this.getParentRequirementIds(planningVersion))
+      : undefined;
     const reqResult = await this.db
       .select({
         businessLine: versionRequirement.businessLine,
         count: count(),
       })
       .from(versionRequirement)
+      .where(planningVersion ? eq(versionRequirement.planningVersion, planningVersion) : undefined)
       .groupBy(versionRequirement.businessLine);
 
     const defectResult = await this.db
@@ -72,6 +103,7 @@ export class DashboardService {
         count: count(),
       })
       .from(defectItem)
+      .where(defectScope)
       .groupBy(defectItem.businessLine);
 
     const map = new Map<string, { businessLine: string; requirementCount: number; defectCount: number }>();
@@ -175,5 +207,28 @@ export class DashboardService {
     activities.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
     return { items: activities.slice(0, limit) };
+  }
+
+  private async getParentRequirementIds(planningVersion: string): Promise<string[]> {
+    const requirements = await this.db
+      .select({
+        id: versionRequirement.id,
+        baseRecordId: versionRequirement.baseRecordId,
+      })
+      .from(versionRequirement)
+      .where(eq(versionRequirement.planningVersion, planningVersion));
+    return [...new Set(requirements.flatMap((requirement) =>
+      [requirement.id, requirement.baseRecordId].filter(
+        (id): id is string => Boolean(id),
+      ),
+    ))];
+  }
+
+  private getDefectScope(parentRequirementIds: string[]) {
+    if (parentRequirementIds.length === 0) return sql`FALSE`;
+    return or(...parentRequirementIds.map((requirementId) =>
+      sql`${defectItem.appParentOrder} -> 'link_record_ids'
+        @> jsonb_build_array(${requirementId}::text)`,
+    ));
   }
 }

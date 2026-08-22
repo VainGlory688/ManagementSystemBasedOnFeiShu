@@ -17,15 +17,15 @@ const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
   },
   '测试中': {
     label: '测试中',
-    className: 'bg-[hsl(38_70%_93%)] text-[hsl(38_90%_42%)] border-transparent',
+    className: 'bg-warning/15 text-warning border-transparent',
   },
   '进行中': {
     label: '进行中',
-    className: 'bg-[hsl(38_70%_93%)] text-[hsl(38_90%_42%)] border-transparent',
+    className: 'bg-warning/15 text-warning border-transparent',
   },
   '已完成': {
     label: '已完成',
-    className: 'bg-[hsl(160_40%_94%)] text-[hsl(160_55%_32%)] border-transparent',
+    className: 'bg-success/15 text-success border-transparent',
   },
   '已阻塞': {
     label: '已阻塞',

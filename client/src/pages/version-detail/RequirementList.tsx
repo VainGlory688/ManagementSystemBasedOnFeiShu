@@ -72,7 +72,10 @@ const RequirementList = ({ items, loading }: RequirementListProps) => {
                 {prio.label}
               </span>
 
-              <Badge variant="secondary" className="shrink-0 h-[22px] text-xs font-normal">
+              <Badge
+                variant="outline"
+                className="shrink-0 h-[22px] border-transparent bg-muted px-2 text-xs font-normal text-muted-foreground"
+              >
                 {req.reqType || '-'}
               </Badge>
             </div>

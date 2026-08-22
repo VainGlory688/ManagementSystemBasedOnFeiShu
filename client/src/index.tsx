@@ -10,8 +10,11 @@ import RoutesComponent from './app.tsx';
 import './index.css';
 import { createPortal } from 'react-dom';
 import { Toaster } from '@client/src/components/ui/sonner';
+import { applyTheme, getStoredTheme } from '@/lib/theme';
 
 const CLIENT_BASE_PATH = process.env.CLIENT_BASE_PATH || '/';
+
+applyTheme(getStoredTheme());
 
 const MainApp = () => {
   return (

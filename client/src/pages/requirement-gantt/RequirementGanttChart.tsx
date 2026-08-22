@@ -18,12 +18,12 @@ export const REQUIREMENT_GANTT_STATUSES = [
   {
     key: '已完成',
     label: '已完成',
-    className: 'border-[hsl(160_55%_42%)] bg-[hsl(160_40%_94%)]',
+    className: 'border-success/60 bg-success/15',
   },
   {
     key: '进行中',
     label: '进行中',
-    className: 'border-[hsl(38_90%_50%)] bg-[hsl(38_70%_93%)]',
+    className: 'border-warning/60 bg-warning/15',
   },
   {
     key: '未处理',
@@ -64,8 +64,8 @@ interface RequirementGanttChartProps {
 }
 
 function getTaskClass(status?: string): string {
-  if (status === '已完成') return 'border-[hsl(160_55%_42%)] bg-[hsl(160_40%_94%)] text-[hsl(160_55%_32%)]';
-  if (status === '进行中' || status === '开发中') return 'border-[hsl(38_90%_50%)] bg-[hsl(38_70%_93%)] text-[hsl(38_75%_30%)]';
+  if (status === '已完成') return 'border-success/60 bg-success/15 text-success';
+  if (status === '进行中' || status === '开发中') return 'border-warning/60 bg-warning/15 text-warning';
   return 'bg-muted text-muted-foreground border-border';
 }
 

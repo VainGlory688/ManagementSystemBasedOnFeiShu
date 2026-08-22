@@ -28,22 +28,22 @@ import { toast } from 'sonner';
 
 function getStatusBadgeClass(status: string): string {
   if (['已完成', '已上线'].includes(status)) {
-    return 'bg-[hsl(160_40%_94%)] text-[hsl(160_55%_42%)] border-transparent';
+    return 'bg-success/15 text-success border-transparent';
   }
   if (['进行中', '开发中'].includes(status)) {
     return 'bg-priority-p2-bg text-priority-p2 border-transparent';
   }
   if (['已阻塞', '有风险'].includes(status)) {
-    return 'bg-priority-p0-bg text-priority-p0 border-transparent';
+    return 'bg-severity-fatal-bg text-severity-fatal border-transparent';
   }
   return 'bg-muted text-muted-foreground border-transparent';
 }
 
 function getPriorityBadgeClass(priority: string): string {
   const classes: Record<string, string> = {
-    P0: 'bg-priority-p0 text-priority-p0-foreground border-transparent',
-    P1: 'bg-priority-p1 text-priority-p1-foreground border-transparent',
-    P2: 'bg-priority-p2 text-[hsl(40_100%_12%)] border-transparent',
+    P0: 'bg-priority-p0-bg text-priority-p0 border-transparent',
+    P1: 'bg-priority-p1-bg text-priority-p1 border-transparent',
+    P2: 'bg-priority-p2-bg text-priority-p2 border-transparent',
     待定: 'bg-transparent text-muted-foreground border-border',
     历史遗留: 'bg-priority-p3-bg text-priority-p3 border-transparent',
   };
