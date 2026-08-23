@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Image } from '@client/src/components/ui/image';
 
 const LOGO_EXTENSIONS = ['png', 'webp', 'jpg', 'jpeg'];
 
@@ -9,10 +10,8 @@ interface ProjectLogoProps {
 
 export function ProjectLogo({ projectId, className = 'size-11' }: ProjectLogoProps) {
   const [assetIndex, setAssetIndex] = useState(0);
-  const appId = (window as Window & { __platform__?: { appId?: string } }).__platform__?.appId;
-  const assetBasePath = appId ? `/app/${appId}` : '';
   const logoUrl = assetIndex < LOGO_EXTENSIONS.length
-    ? `${assetBasePath}/project-logos/${encodeURIComponent(projectId)}.${LOGO_EXTENSIONS[assetIndex]}`
+    ? `${import.meta.env.BASE_URL}project-logos/${encodeURIComponent(projectId)}.${LOGO_EXTENSIONS[assetIndex]}`
     : null;
 
   if (!logoUrl) {
@@ -27,7 +26,7 @@ export function ProjectLogo({ projectId, className = 'size-11' }: ProjectLogoPro
   }
 
   return (
-    <img
+    <Image
       src={logoUrl}
       alt={`${projectId} 游戏 Logo`}
       className={`shrink-0 rounded-sm border border-border bg-muted object-cover ${className}`}
