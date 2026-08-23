@@ -169,10 +169,10 @@ export class RequirementService {
       .from(versionRequirement)
       .where(where)
       .orderBy(desc(versionRequirement.updatedAt));
-    const statusMap = await this.getCurrentStatuses(allItems, projectId);
+    const scheduleSummaryMap = await this.getRequirementScheduleSummaries(allItems, projectId);
     const matchedItems = currentStatus
       ? allItems.filter(
-          (item) => (statusMap.get(item.id) || '待拆分') === currentStatus,
+          (item) => (scheduleSummaryMap.get(item.id)?.currentStatus || '待拆分') === currentStatus,
         )
       : allItems;
     const total = matchedItems.length;
@@ -206,13 +206,14 @@ export class RequirementService {
     return {
       items: itemsRes.map((r) => {
         const v = r.planningVersion ? versionMap.get(r.planningVersion) : undefined;
+        const scheduleSummary = scheduleSummaryMap.get(r.id);
         return {
           id: r.id,
           baseRecordId: r.baseRecordId || '',
           updatedAt: r.updatedAt.toISOString(),
           appReqName: r.appReqName || '',
           currentOwner: r.currentOwner || '',
-          currentStatus: statusMap.get(r.id) || '待拆分',
+          currentStatus: scheduleSummary?.currentStatus || '待拆分',
           priority: r.priority || '',
           appStatus: '',
           reqType: r.reqType || '',
@@ -221,7 +222,10 @@ export class RequirementService {
           planningVersionName: v?.versionName || '',
           planningVersionId: v?.id,
           proposalTime: r.proposalTime?.toString() || '',
-          estimatedCompletionTime: r.estimatedCompletionTime?.toString() || '',
+          estimatedCompletionTime: scheduleSummary?.hasSubRequirements
+            ? scheduleSummary.latestSubRequirementEndDate
+            : r.estimatedCompletionTime?.toString() || '',
+          estimatedCompletionTimeSource: scheduleSummary?.hasSubRequirements ? 'subRequirements' : 'manual',
           creator: r.creator || '',
           description: r.description || '',
         };
@@ -283,6 +287,21 @@ export class RequirementService {
         return subRequirement;
       })
       .sort((a, b) => a.appSubRequirementName.localeCompare(b.appSubRequirementName, 'zh-CN'));
+    const unscheduledSubRequirements = subItems
+      .filter((item) =>
+        !['已完成', '已上线'].includes(item.appStatus || '')
+        && (!item.appExpectedStartDate || !item.appExpectedEndDate),
+      )
+      .map((item) => {
+        const subRequirement = this.mapSubRequirement(item);
+        const parentId = extractParentRecordIds(item.appParentWorkItem)[0];
+        subRequirement.appParentWorkItemRecordId = parentId;
+        subRequirement.appParentWorkItemName = parentId
+          ? parentNameMap.get(parentId)
+          : undefined;
+        return subRequirement;
+      })
+      .sort((a, b) => a.appSubRequirementName.localeCompare(b.appSubRequirementName, 'zh-CN'));
     const rawRequirements = requirements.items.length === 0
       ? []
       : await this.db
@@ -297,6 +316,7 @@ export class RequirementService {
       unscheduledOrTodoRequirements: requirements.items.filter(
         (item) => !item.planningVersion || item.currentStatus === '待拆分',
       ),
+      unscheduledSubRequirements,
       todayDueSubRequirements,
       blockedSubRequirements: this.getBlockedSubRequirements(rawRequirements, subItems)
         .filter((item) =>
@@ -374,7 +394,8 @@ export class RequirementService {
       throw new NotFoundException('需求不存在');
     }
     const r = result[0];
-    const statusMap = await this.getCurrentStatuses([r], projectId);
+    const scheduleSummaryMap = await this.getRequirementScheduleSummaries([r], projectId);
+    const scheduleSummary = scheduleSummaryMap.get(r.id);
     const version = r.planningVersion
       ? await this.db
           .select({ versionName: mainVersionManage.versionName, id: mainVersionManage.id })
@@ -396,7 +417,7 @@ export class RequirementService {
       updatedAt: r.updatedAt.toISOString(),
       appReqName: r.appReqName || '',
       currentOwner: r.currentOwner || '',
-      currentStatus: statusMap.get(r.id) || '待拆分',
+      currentStatus: scheduleSummary?.currentStatus || '待拆分',
       priority: r.priority || '',
       appStatus: '',
       reqType: r.reqType || '',
@@ -405,7 +426,10 @@ export class RequirementService {
       planningVersionName: version[0]?.versionName || '',
       planningVersionId: version[0]?.id,
       proposalTime: r.proposalTime?.toString() || '',
-      estimatedCompletionTime: r.estimatedCompletionTime?.toString() || '',
+      estimatedCompletionTime: scheduleSummary?.hasSubRequirements
+        ? scheduleSummary.latestSubRequirementEndDate
+        : r.estimatedCompletionTime?.toString() || '',
+      estimatedCompletionTimeSource: scheduleSummary?.hasSubRequirements ? 'subRequirements' : 'manual',
       creator: r.creator || '',
       description: r.description || '',
       pipeline: parsePipeline(r.subRequirementItem),
@@ -663,10 +687,14 @@ export class RequirementService {
     return version.id;
   }
 
-  private async getCurrentStatuses(
+  private async getRequirementScheduleSummaries(
     requirements: Array<Pick<typeof versionRequirement.$inferSelect, 'id' | 'baseRecordId'>>,
     projectId?: string,
-  ): Promise<Map<string, RequirementCurrentStatus>> {
+  ): Promise<Map<string, {
+    currentStatus: RequirementCurrentStatus;
+    hasSubRequirements: boolean;
+    latestSubRequirementEndDate: string;
+  }>> {
     const parentIds = [...new Set(
       requirements.flatMap((requirement) =>
         [requirement.id, requirement.baseRecordId].filter(
@@ -699,16 +727,23 @@ export class RequirementService {
       }
     }
 
-    return new Map(
-      requirements.map((requirement) => [
+    return new Map(requirements.map((requirement) => {
+      const childItems = itemsByParent.get(requirement.baseRecordId || requirement.id)
+        || itemsByParent.get(requirement.id)
+        || [];
+      const latestSubRequirementEndDate = childItems
+        .map((item) => item.appExpectedEndDate?.toString() || '')
+        .filter(Boolean)
+        .sort((a, b) => b.localeCompare(a))[0] || '';
+      return [
         requirement.id,
-        aggregateRequirementStatus(
-          itemsByParent.get(requirement.baseRecordId || requirement.id)
-          || itemsByParent.get(requirement.id)
-          || [],
-        ),
-      ]),
-    );
+        {
+          currentStatus: aggregateRequirementStatus(childItems),
+          hasSubRequirements: childItems.length > 0,
+          latestSubRequirementEndDate,
+        },
+      ];
+    }));
   }
 
   private mapSubRequirement(s: typeof subRequirementItem.$inferSelect): SubRequirementItem {

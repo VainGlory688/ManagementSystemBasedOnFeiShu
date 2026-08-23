@@ -39,6 +39,7 @@ import type {
 const EMPTY_RESPONSE: ExceptionItemsResponse = {
   overdueRequirements: [],
   unscheduledOrTodoRequirements: [],
+  unscheduledSubRequirements: [],
   todayDueSubRequirements: [],
   blockedSubRequirements: [],
 };
@@ -361,10 +362,16 @@ const ExceptionItemsPage = () => {
             <RequirementTable items={data.overdueRequirements} emptyText="暂无逾期需求" />
           </section>
         ) : activeTab === 'unscheduled' ? (
-          <section className="overflow-hidden rounded-sm border border-border bg-card">
-            <SectionTitle icon={ClipboardList} title="未排期或待办事项" count={data.unscheduledOrTodoRequirements.length} tone="text-[hsl(38_90%_42%)]" />
-            <RequirementTable items={data.unscheduledOrTodoRequirements} emptyText="暂无未排期或待办需求" />
-          </section>
+          <div className="flex flex-col gap-4">
+            <section className="overflow-hidden rounded-sm border border-border bg-card">
+              <SectionTitle icon={ClipboardList} title="待拆分或未关联版本需求" count={data.unscheduledOrTodoRequirements.length} tone="text-[hsl(38_90%_42%)]" />
+              <RequirementTable items={data.unscheduledOrTodoRequirements} emptyText="暂无待拆分或未关联版本需求" />
+            </section>
+            <section className="overflow-hidden rounded-sm border border-border bg-card">
+              <SectionTitle icon={CalendarDays} title="未排期子需求" count={data.unscheduledSubRequirements.length} tone="text-[hsl(38_90%_42%)]" />
+              <SubRequirementTable items={data.unscheduledSubRequirements} emptyText="暂无未排期子需求" />
+            </section>
+          </div>
         ) : activeTab === 'today-due' ? (
           <section className="overflow-hidden rounded-sm border border-border bg-card">
             <SectionTitle icon={CalendarDays} title="今日到期事项" count={data.todayDueSubRequirements.length} tone="text-primary" />

@@ -112,6 +112,7 @@ export interface VersionRequirement {
   planningVersionId?: string;
   proposalTime: string;
   estimatedCompletionTime: string;
+  estimatedCompletionTimeSource?: 'manual' | 'subRequirements';
   creator: string;
   description?: string;
   pipeline?: RequirementPipelineConfig;
@@ -167,6 +168,7 @@ export interface SubRequirementListResponse {
 export interface ExceptionItemsResponse {
   overdueRequirements: VersionRequirement[];
   unscheduledOrTodoRequirements: VersionRequirement[];
+  unscheduledSubRequirements: SubRequirementItem[];
   todayDueSubRequirements: SubRequirementItem[];
   blockedSubRequirements: SubRequirementItem[];
 }

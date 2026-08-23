@@ -265,13 +265,20 @@ const RequirementDetailPage = () => {
               <span className="font-mono">{formatDate(detail.proposalTime)}</span>
             </InfoItem>
             <InfoItem label="预计完成时间" delay={400}>
-              <InlineEditableField
-                value={detail.estimatedCompletionTime}
-                onSave={(value) => saveField('estimatedCompletionTime', value)}
-                renderEditor={(value, onChange) => <Input type="date" value={toDateInputValue(value)} onChange={(event) => onChange(event.target.value)} />}
-              >
-                <span className="font-mono">{formatDate(detail.estimatedCompletionTime)}</span>
-              </InlineEditableField>
+              {detail.estimatedCompletionTimeSource === 'subRequirements' ? (
+                <div>
+                  <span className="font-mono">{formatDate(detail.estimatedCompletionTime)}</span>
+                  <p className="mt-1 text-xs text-muted-foreground">由子需求最晚预计结束时间自动汇总</p>
+                </div>
+              ) : (
+                <InlineEditableField
+                  value={detail.estimatedCompletionTime}
+                  onSave={(value) => saveField('estimatedCompletionTime', value)}
+                  renderEditor={(value, onChange) => <Input type="date" value={toDateInputValue(value)} onChange={(event) => onChange(event.target.value)} />}
+                >
+                  <span className="font-mono">{formatDate(detail.estimatedCompletionTime)}</span>
+                </InlineEditableField>
+              )}
             </InfoItem>
             <InfoItem label="创建人" delay={450}>
               {detail.creator ? (
