@@ -323,6 +323,8 @@ export class RequirementService {
           (!subPriority || item.appPriority === subPriority)
           && (!subOwner || item.appCurrentOwner === subOwner)
           && (!subKeyword || item.appSubRequirementName.toLowerCase().includes(subKeyword.toLowerCase()))),
+      requirementsTotal: requirements.total,
+      isRequirementScopeTruncated: requirements.total > 1_000,
     };
   }
 

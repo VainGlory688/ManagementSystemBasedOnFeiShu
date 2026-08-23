@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, CalendarDays, ClipboardList, Loader2, Search } from 'lucide-react';
 import { logger } from '@lark-apaas/client-toolkit/logger';
@@ -21,6 +21,7 @@ import { UserSelect } from '@/components/business-ui/user-select';
 import { LabelBadge } from '@/components/LabelBadge';
 import { cn } from '@/lib/utils';
 import { getPriorityRowClass } from '@/utils/version-helpers';
+import { toast } from 'sonner';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 import RequirementFilterBar from '@/pages/requirement-list/RequirementFilterBar';
 import { RequirementStatusBadge } from '@/pages/requirement-list/RequirementStatusBadge';
@@ -42,6 +43,8 @@ const EMPTY_RESPONSE: ExceptionItemsResponse = {
   unscheduledSubRequirements: [],
   todayDueSubRequirements: [],
   blockedSubRequirements: [],
+  requirementsTotal: 0,
+  isRequirementScopeTruncated: false,
 };
 
 type ExceptionTab = 'overdue' | 'unscheduled' | 'today-due' | 'blocked';
@@ -288,6 +291,7 @@ const ExceptionItemsPage = () => {
   const [blockedParams, setBlockedParams] = useState<SubRequirementParams>({});
   const [data, setData] = useState<ExceptionItemsResponse>(EMPTY_RESPONSE);
   const [loading, setLoading] = useState(true);
+  const truncationNoticeShownRef = useRef(false);
   const activeParams = useMemo<ExceptionItemsParams>(() => (
     activeTab === 'overdue'
       ? overdueParams
@@ -303,7 +307,13 @@ const ExceptionItemsPage = () => {
     setLoading(true);
     getExceptionItems(activeParams)
       .then((response) => {
-        if (!cancelled) setData(response);
+        if (!cancelled) {
+          setData(response);
+          if (response.isRequirementScopeTruncated && !truncationNoticeShownRef.current) {
+            truncationNoticeShownRef.current = true;
+            toast.warning(`当前项目共有 ${response.requirementsTotal} 条需求，异常事项仅基于前 1000 条需求统计，结果可能不完整。`);
+          }
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) {

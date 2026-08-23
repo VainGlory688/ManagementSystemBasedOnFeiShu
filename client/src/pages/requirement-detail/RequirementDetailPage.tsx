@@ -91,7 +91,12 @@ const RequirementDetailPage = () => {
     if (!id) return;
     setSubLoading(true);
     getSubRequirementList(id, 1, 50)
-      .then((res) => setSubItems(res.items))
+      .then((res) => {
+        setSubItems(res.items);
+        if (res.total > 50) {
+          toast.warning(`该需求共有 ${res.total} 条子需求，流水线目前仅加载前 50 条；未加载子需求的连线不会显示或编辑。`);
+        }
+      })
       .catch((err: unknown) => logger.error('加载子需求失败', err))
       .finally(() => setSubLoading(false));
   }, [id]);

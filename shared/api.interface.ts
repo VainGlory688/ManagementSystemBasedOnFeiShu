@@ -171,6 +171,8 @@ export interface ExceptionItemsResponse {
   unscheduledSubRequirements: SubRequirementItem[];
   todayDueSubRequirements: SubRequirementItem[];
   blockedSubRequirements: SubRequirementItem[];
+  requirementsTotal: number;
+  isRequirementScopeTruncated: boolean;
 }
 
 export interface TestPlan {
