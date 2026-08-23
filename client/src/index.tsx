@@ -11,6 +11,7 @@ import './index.css';
 import { createPortal } from 'react-dom';
 import { Toaster } from '@client/src/components/ui/sonner';
 import { OpeningSplash } from '@/components/OpeningSplash';
+import { UserWatermark } from '@/components/UserWatermark';
 import { applyTheme, getStoredTheme } from '@/lib/theme';
 import { axiosForBackend } from '@lark-apaas/client-toolkit/utils/getAxiosForBackend';
 import { getCurrentProjectId } from '@/components/ProjectScope';
@@ -45,6 +46,7 @@ const MainApp = () => {
         >
           <RoutesComponent />
           {createPortal(<Toaster />, document.body)}
+          {createPortal(<UserWatermark />, document.body)}
           <OpeningSplash />
         </ErrorBoundary>
       </AppContainer>

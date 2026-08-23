@@ -594,3 +594,41 @@
     animation: none;
   }
 }
+
+.user-watermark {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 60;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: repeat(8, minmax(0, 1fr));
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.user-watermark__item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, hsl(var(--primary)) 20%, #fff);
+  font-family: "Space Grotesk", "Noto Sans SC", system-ui, sans-serif;
+  font-size: clamp(1.375rem, 2vw, 2.25rem);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  mix-blend-mode: difference;
+  opacity: 0.045;
+  text-align: center;
+  transform: rotate(-24deg);
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .user-watermark {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: repeat(7, minmax(0, 1fr));
+  }
+}
